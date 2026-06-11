@@ -1,3 +1,5 @@
+import { basename } from "node:path";
+
 import { type ToolDefinition, tool } from "@opencode-ai/plugin";
 import { DREAMER_AGENT } from "../../agents/dreamer";
 import {
@@ -12,6 +14,7 @@ import {
     mergeMemoryStats,
     saveEmbedding,
     supersededMemory,
+    teeToExternalBackend,
     updateMemorySeenCount,
 } from "../../features/magic-context/memory";
 import {
@@ -319,6 +322,21 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
                     memoryId: memory.id,
                     content,
                 });
+
+                void teeToExternalBackend("agent", [
+                    {
+                        content,
+                        category,
+                        scope: "project",
+                        projectIdentity: projectPath,
+                        ...(toolContext.directory
+                            ? { projectName: basename(toolContext.directory) }
+                            : {}),
+                        sourceType:
+                            toolContext.agent === DREAMER_AGENT ? "dreamer" : getSourceType(deps),
+                        sessionId: toolContext.sessionID,
+                    },
+                ]);
 
                 return `Saved memory [ID: ${memory.id}] in ${category}.`;
             }
