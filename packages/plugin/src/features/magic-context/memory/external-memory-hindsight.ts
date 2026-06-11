@@ -166,8 +166,12 @@ export class HindsightMemoryBackend implements ExternalMemoryBackend {
         query: ExternalMemoryRecallQuery,
         signal?: AbortSignal,
     ): Promise<ExternalMemoryRecallResult[]> {
-        if (!(await this.initialize())) return [];
         const scope = query.scope ?? "global";
+        if (scope === "project" && !query.projectIdentity) {
+            log("[magic-context] hindsight recall: project scope without identity — skipping");
+            return [];
+        }
+        if (!(await this.initialize())) return [];
         const bank = this.resolveBankForScope(scope, query.projectIdentity, query.projectName);
         const filter =
             scope === "user"
@@ -190,15 +194,21 @@ export class HindsightMemoryBackend implements ExternalMemoryBackend {
         );
         if (!response || response.status === 404) return [];
         const body = (await response.json().catch(() => null)) as {
-            results?: Array<{ text?: string; score?: number; tags?: string[] }>;
+            results?: unknown;
         } | null;
+        const rawResults = Array.isArray(body?.results) ? body.results : [];
         const results: ExternalMemoryRecallResult[] = [];
-        for (const r of body?.results ?? []) {
-            if (typeof r.text !== "string" || r.text.length === 0) continue;
-            const categoryTag = (r.tags ?? []).find((t) => t.startsWith("category:"));
+        for (const r of rawResults) {
+            if (!r || typeof r !== "object") continue;
+            const item = r as { text?: unknown; score?: unknown; tags?: unknown };
+            if (typeof item.text !== "string" || item.text.length === 0) continue;
+            const tags = Array.isArray(item.tags) ? item.tags : [];
+            const categoryTag = tags.find(
+                (t): t is string => typeof t === "string" && t.startsWith("category:"),
+            );
             results.push({
-                content: r.text,
-                ...(typeof r.score === "number" ? { score: r.score } : {}),
+                content: item.text,
+                ...(typeof item.score === "number" ? { score: item.score } : {}),
                 ...(categoryTag ? { category: categoryTag.slice("category:".length) } : {}),
             });
             if (query.limit && results.length >= query.limit) break;
@@ -211,6 +221,10 @@ export class HindsightMemoryBackend implements ExternalMemoryBackend {
         if (!(await this.initialize())) return 0;
         let removed = 0;
         for (const item of items) {
+            if (item.scope === "project" && !item.projectIdentity) {
+                log("[magic-context] hindsight remove: project scope without identity — skipping");
+                continue;
+            }
             try {
                 const bank = this.resolveBankForScope(
                     item.scope,

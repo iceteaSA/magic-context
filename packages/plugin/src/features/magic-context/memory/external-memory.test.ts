@@ -13,7 +13,6 @@ import {
 import type {
     ExternalMemoryBackend,
     ExternalMemoryRecallQuery,
-    ExternalMemoryRecallResult,
     ExternalMemoryRemoveItem,
     ExternalMemoryRetainItem,
 } from "./external-memory-provider";
