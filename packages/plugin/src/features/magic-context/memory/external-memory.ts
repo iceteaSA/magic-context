@@ -173,6 +173,43 @@ export async function upsertToExternalBackend(items: ExternalMemoryRetainItem[])
     }
 }
 
+/** Status snapshot for the ctx-status / RPC surface. Sync, no network. */
+export interface ExternalMemoryStatus {
+    provider: string;
+    endpoint?: string;
+    circuitState?: string;
+}
+
+export function getExternalMemoryStatus(): ExternalMemoryStatus | null {
+    if (externalConfig.provider === "off") return null;
+    const current = getOrCreateBackend();
+    const circuitState =
+        current && "_getCircuitState" in current
+            ? (current as { _getCircuitState(): string })._getCircuitState()
+            : undefined;
+    return {
+        provider: externalConfig.provider,
+        endpoint: externalConfig.endpoint,
+        ...(circuitState ? { circuitState } : {}),
+    };
+}
+
+/** Best-effort failed-retain count from the operations endpoint (doctor).
+ *  Returns null when the backend is offline, the endpoint is missing, or the
+ *  response is malformed. Never throws. */
+export async function fetchExternalFailedRetains(signal?: AbortSignal): Promise<number | null> {
+    try {
+        if (externalConfig.provider === "off") return null;
+        const current = getOrCreateBackend();
+        if (!current || !("fetchFailedRetainCount" in current)) return null;
+        return await (
+            current as { fetchFailedRetainCount(s?: AbortSignal): Promise<number | null> }
+        ).fetchFailedRetainCount(signal);
+    } catch {
+        return null;
+    }
+}
+
 export async function disposeExternalMemoryBackend(): Promise<void> {
     const current = backend;
     backend = null;

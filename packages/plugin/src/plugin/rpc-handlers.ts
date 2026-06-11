@@ -3,6 +3,8 @@
  * and returns typed responses for TUI consumption.
  */
 import type { MagicContextConfig } from "../config/schema/magic-context";
+import { getExternalMemoryStatus } from "../features/magic-context/memory/external-memory";
+import { readExternalRecallSnapshot } from "../features/magic-context/memory/external-recall-read";
 import { resolveProjectIdentity } from "../features/magic-context/memory/project-identity";
 import {
     type ContextDatabase as Database,
@@ -535,7 +537,17 @@ export function buildStatusDetail(
         historyBlockTokens: 0,
         compressionBudget: null,
         compressionUsage: null,
+        externalMemory: null,
     };
+
+    const externalStatus = getExternalMemoryStatus();
+    if (externalStatus) {
+        const { state: recallState } = readExternalRecallSnapshot(db, sessionId);
+        detail.externalMemory = {
+            ...externalStatus,
+            recallState,
+        };
+    }
 
     try {
         const meta = db

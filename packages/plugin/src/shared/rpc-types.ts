@@ -124,6 +124,21 @@ export interface StatusDetail extends SidebarSnapshot {
     historyBlockTokens: number;
     compressionBudget: number | null;
     compressionUsage: string | null;
+    /**
+     * External memory backend status snapshot. Null when the provider is off
+     * (or never initialized). `recallState` mirrors the session's
+     * `external_recall_state` so the status dialog can show "pending" /
+     * "done" / "failed" alongside the backend health. Network-touching fields
+     * (failed-retain count from the operations endpoint) are intentionally
+     * omitted here — buildStatusDetail is sync; wiring the count requires an
+     * async handler refactor that the current spec defers.
+     */
+    externalMemory?: {
+        provider: string;
+        endpoint?: string;
+        circuitState?: string;
+        recallState?: string | null;
+    } | null;
 }
 
 export interface RpcNotificationMessage {

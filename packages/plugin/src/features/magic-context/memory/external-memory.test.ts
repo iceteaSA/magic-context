@@ -2,6 +2,8 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
     _resetExternalMemoryForTests,
     _setTestExternalBackendFactory,
+    fetchExternalFailedRetains,
+    getExternalMemoryStatus,
     getExternalRecallConfig,
     initializeExternalMemory,
     isExternalSearchEnabled,
@@ -226,5 +228,70 @@ describe("ungated v2 orchestrator paths", () => {
         initializeExternalMemory(HINDSIGHT_TEST_CONFIG);
         expect(getExternalRecallConfig()?.enabled).toBe(true);
         expect(isExternalSearchEnabled()).toBe(true);
+    });
+});
+
+describe("getExternalMemoryStatus", () => {
+    test("null when provider off", () => {
+        initializeExternalMemory({ provider: "off" });
+        expect(getExternalMemoryStatus()).toBeNull();
+    });
+
+    test("populated with provider + endpoint when on", () => {
+        _setTestExternalBackendFactory(() => makeFakeBackend([]));
+        initializeExternalMemory(HINDSIGHT_TEST_CONFIG);
+        const status = getExternalMemoryStatus();
+        expect(status).not.toBeNull();
+        expect(status?.provider).toBe("hindsight");
+        expect(status?.endpoint).toBe("http://10.0.0.1:8889");
+    });
+
+    test("circuitState included when backend exposes _getCircuitState", () => {
+        _setTestExternalBackendFactory(() => ({
+            backendId: "fake:circuit",
+            initialize: async () => true,
+            retain: async () => 0,
+            dispose: async () => {},
+            _getCircuitState: () => "half_open",
+        }));
+        initializeExternalMemory(HINDSIGHT_TEST_CONFIG);
+        expect(getExternalMemoryStatus()?.circuitState).toBe("half_open");
+    });
+
+    test("fetchExternalFailedRetains returns null when provider off", async () => {
+        initializeExternalMemory({ provider: "off" });
+        expect(await fetchExternalFailedRetains()).toBeNull();
+    });
+
+    test("fetchExternalFailedRetains returns null when backend lacks hook", async () => {
+        _setTestExternalBackendFactory(() => makeFakeBackend([]));
+        initializeExternalMemory(HINDSIGHT_TEST_CONFIG);
+        expect(await fetchExternalFailedRetains()).toBeNull();
+    });
+
+    test("fetchExternalFailedRetains returns count from backend hook", async () => {
+        _setTestExternalBackendFactory(() => ({
+            backendId: "fake:ops",
+            initialize: async () => true,
+            retain: async () => 0,
+            dispose: async () => {},
+            fetchFailedRetainCount: async () => 7,
+        }));
+        initializeExternalMemory(HINDSIGHT_TEST_CONFIG);
+        expect(await fetchExternalFailedRetains()).toBe(7);
+    });
+
+    test("fetchExternalFailedRetains swallows backend throw", async () => {
+        _setTestExternalBackendFactory(() => ({
+            backendId: "fake:ops-boom",
+            initialize: async () => true,
+            retain: async () => 0,
+            dispose: async () => {},
+            fetchFailedRetainCount: async () => {
+                throw new Error("boom");
+            },
+        }));
+        initializeExternalMemory(HINDSIGHT_TEST_CONFIG);
+        expect(await fetchExternalFailedRetains()).toBeNull();
     });
 });

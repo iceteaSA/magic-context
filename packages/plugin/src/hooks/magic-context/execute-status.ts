@@ -3,6 +3,8 @@ import {
     DEFAULT_NUDGE_INTERVAL_TOKENS,
 } from "../../config/schema/magic-context";
 import { getCompartments } from "../../features/magic-context/compartment-storage";
+import { getExternalMemoryStatus } from "../../features/magic-context/memory/external-memory";
+import { readExternalRecallSnapshot } from "../../features/magic-context/memory/external-recall-read";
 import { parseCacheTtl } from "../../features/magic-context/scheduler";
 import { getPendingOps } from "../../features/magic-context/storage";
 import { getOrCreateSessionMeta } from "../../features/magic-context/storage-meta";
@@ -202,6 +204,18 @@ export function executeStatus(
             for (const op of pendingOps) {
                 lines.push(`- §${op.tagId}§ → ${op.operation}`);
             }
+        }
+
+        const externalStatus = getExternalMemoryStatus();
+        if (externalStatus) {
+            const { state: recallState } = readExternalRecallSnapshot(db, sessionId);
+            lines.push(
+                "",
+                "### External memory",
+                `- provider: ${externalStatus.provider} (${externalStatus.endpoint ?? "?"})`,
+                `- circuit: ${externalStatus.circuitState ?? "n/a"}`,
+                `- session recall: ${recallState ?? "not started"}`,
+            );
         }
 
         return lines.join("\n");
