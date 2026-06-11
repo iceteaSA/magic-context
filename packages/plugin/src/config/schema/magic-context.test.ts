@@ -104,6 +104,16 @@ describe("MagicContextConfigSchema", () => {
                         project_bank: "mc-{name}-{id8}",
                         retain_sources: ["historian", "agent", "dreamer"],
                         tags: [],
+                        recall: {
+                            enabled: true,
+                            timeout_ms: 3000,
+                            max_tokens: 2048,
+                            dedup_threshold: 0.85,
+                            global_tags: [],
+                            search: true,
+                            mental_models: true,
+                            profile_mental_models: ["user-preferences"],
+                        },
                     },
                 },
                 sidekick: {
