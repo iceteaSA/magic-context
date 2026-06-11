@@ -15,6 +15,7 @@ import {
     createFailClosedController,
     getLastHookInitFailure,
 } from "./features/magic-context/fail-closed-block";
+import { initializeExternalMemory } from "./features/magic-context/memory/external-memory";
 import { resolveProjectIdentityForSession } from "./features/magic-context/memory/project-identity";
 import { runSessionProjectBackfill } from "./features/magic-context/session-project-backfill";
 import { SIDEKICK_SYSTEM_PROMPT } from "./features/magic-context/sidekick/agent";
@@ -311,6 +312,7 @@ const server: Plugin = async (ctx) => {
     // Start independent dream schedule timer at plugin level (not inside hooks)
     // so overnight dreaming works even when the user isn't chatting.
     if (pluginConfig.enabled) {
+        initializeExternalMemory(pluginConfig.memory?.external);
         const dreamerRunnable = isDreamerRunnable(pluginConfig);
         const classifyModuleClient = createDreamTimerModuleClient(rustModeModuleClient);
         const timerProjectIdentity = resolveProjectIdentityForSession(ctx.directory);
