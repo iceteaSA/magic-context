@@ -803,9 +803,16 @@ export function createTransform(deps: TransformDeps) {
         if (fullFeatureMode && compartmentDirectory) {
             // Kick project registration so the dedup embedding provider is
             // likely registered by recall-settle time; hash-only fallback
-            // covers the race (spec-accepted).
+            // covers the race (spec-accepted). Best-effort: a synchronously
+            // throwing injected dep must not abort the transform.
             if (deps.ensureProjectRegistered) {
-                void deps.ensureProjectRegistered(compartmentDirectory, db).catch(() => {});
+                try {
+                    void Promise.resolve(
+                        deps.ensureProjectRegistered(compartmentDirectory, db),
+                    ).catch(() => {});
+                } catch {
+                    // ignore — registration is best-effort
+                }
             }
             startSessionRecall({
                 db,
