@@ -15,6 +15,7 @@ import {
 } from "../../features/magic-context/memory/external-memory";
 import type {
     ExternalMemoryBackend,
+    ExternalMemoryRemoveItem,
     ExternalMemoryRetainItem,
 } from "../../features/magic-context/memory/external-memory-provider";
 import { Database } from "../../shared/sqlite";
@@ -152,21 +153,34 @@ const HINDSIGHT_TEST_CONFIG = {
     },
 };
 
-function captureTee(): ExternalMemoryRetainItem[][] {
-    const calls: ExternalMemoryRetainItem[][] = [];
+interface ExternalBackendCapture {
+    retains: ExternalMemoryRetainItem[][];
+    removes: ExternalMemoryRemoveItem[][];
+}
+
+function captureBackend(): ExternalBackendCapture {
+    const capture: ExternalBackendCapture = { retains: [], removes: [] };
     _setTestExternalBackendFactory(
         (): ExternalMemoryBackend => ({
             backendId: "fake:test",
             initialize: async () => true,
             retain: async (items) => {
-                calls.push([...items]);
+                capture.retains.push([...items]);
+                return items.length;
+            },
+            remove: async (items) => {
+                capture.removes.push([...items]);
                 return items.length;
             },
             dispose: async () => {},
         }),
     );
     initializeExternalMemory(HINDSIGHT_TEST_CONFIG);
-    return calls;
+    return capture;
+}
+
+function captureTee(): ExternalMemoryRetainItem[][] {
+    return captureBackend().retains;
 }
 
 afterAll(() => {
@@ -712,6 +726,192 @@ describe("createCtxMemoryTools", () => {
             );
 
             expect(result).toContain("Found 1 active memory");
+        });
+    });
+
+    describe("#given corrective propagation to external backend", () => {
+        function extractMemoryId(result: string): number {
+            const match = result.match(/\[ID:\s*(\d+)\]/);
+            if (!match) throw new Error(`could not parse memory id from: ${result}`);
+            return Number.parseInt(match[1]!, 10);
+        }
+
+        it("delete action propagates remove to external backend", async () => {
+            const capture = captureBackend();
+            const writeResult = await tools.ctx_memory.execute(
+                {
+                    action: "write",
+                    category: "ARCHITECTURE",
+                    content: "doomed fact",
+                },
+                toolContext(),
+            );
+            const id = extractMemoryId(writeResult);
+
+            const deleteResult = await tools.ctx_memory.execute(
+                { action: "delete", id },
+                toolContext(),
+            );
+
+            expect(deleteResult).toContain("Archived memory");
+            // The write tees a retain (fire-and-forget); the corrective delete must
+            // also tee a remove with the same content + project scope.
+            await Bun.sleep(10);
+            expect(capture.removes.length).toBe(1);
+            expect(capture.removes[0]?.[0]).toMatchObject({
+                content: "doomed fact",
+                category: "ARCHITECTURE",
+                scope: "project",
+            });
+            // Sanity: the write's retain is still in the log too.
+            expect(capture.retains.length).toBe(1);
+        });
+
+        it("archive action propagates remove to external backend", async () => {
+            const capture = captureBackend();
+            const writeResult = await tools.ctx_memory.execute(
+                {
+                    action: "write",
+                    category: "PROJECT_RULES",
+                    content: "stale fact",
+                },
+                toolContext("ses-dreamer", DREAMER_AGENT),
+            );
+            const id = extractMemoryId(writeResult);
+
+            const archiveResult = await tools.ctx_memory.execute(
+                { action: "archive", id, reason: "subsystem removed" },
+                toolContext("ses-dreamer", DREAMER_AGENT),
+            );
+
+            expect(archiveResult).toContain("Archived memory");
+            await Bun.sleep(10);
+            expect(capture.removes.length).toBe(1);
+            expect(capture.removes[0]?.[0]?.content).toBe("stale fact");
+            expect(capture.removes[0]?.[0]?.category).toBe("PROJECT_RULES");
+        });
+
+        it("update action removes old content and tees new content", async () => {
+            const capture = captureBackend();
+            const writeResult = await tools.ctx_memory.execute(
+                {
+                    action: "write",
+                    category: "CONFIG_VALUES",
+                    content: "old wording",
+                },
+                toolContext("ses-dreamer", DREAMER_AGENT),
+            );
+            const id = extractMemoryId(writeResult);
+            // Wait for the write's retain to land before counting subsequent calls.
+            await Bun.sleep(10);
+            capture.retains.length = 0;
+            capture.removes.length = 0;
+
+            const updateResult = await tools.ctx_memory.execute(
+                {
+                    action: "update",
+                    id,
+                    content: "new wording",
+                },
+                toolContext("ses-dreamer", DREAMER_AGENT),
+            );
+
+            expect(updateResult).toContain("Updated memory");
+            await Bun.sleep(10);
+            // Old content removed from external (the document identity derives
+            // from the original content hash; without the remove, the new retain
+            // would create a duplicate document).
+            expect(capture.removes.length).toBe(1);
+            expect(capture.removes[0]?.[0]?.content).toBe("old wording");
+            // Corrected content teed as a new document.
+            const teed = capture.retains.flat();
+            expect(teed.some((item) => item.content === "new wording")).toBe(true);
+        });
+
+        it("verify action sets verification status and upserts verbatim", async () => {
+            const capture = captureBackend();
+            const writeResult = await tools.ctx_memory.execute(
+                {
+                    action: "write",
+                    category: "PROJECT_RULES",
+                    content: "true fact",
+                },
+                toolContext("ses-dreamer", DREAMER_AGENT),
+            );
+            const id = extractMemoryId(writeResult);
+            await Bun.sleep(10);
+            capture.retains.length = 0;
+            capture.removes.length = 0;
+
+            const verifyResult = await tools.ctx_memory.execute(
+                { action: "verify", id },
+                toolContext("ses-dreamer", DREAMER_AGENT),
+            );
+
+            expect(verifyResult).toContain("Verified memory");
+            // The local row's verification_status flipped.
+            expect(getMemoryById(db, id)?.verificationStatus).toBe("verified");
+            await Bun.sleep(10);
+            // Verbatim re-retain = same document_id = server-side upsert — the
+            // single retain should contain the EXACT unchanged content plus
+            // verifiedAt metadata. No remove is fired (the document is current).
+            const upserted = capture.retains.flat();
+            expect(upserted.length).toBe(1);
+            expect(upserted[0]?.content).toBe("true fact");
+            expect(typeof upserted[0]?.verifiedAt).toBe("number");
+            expect(capture.removes.length).toBe(0);
+        });
+
+        it("merge does NOT propagate to external backend (canonical rewrite is local-only)", async () => {
+            const capture = captureBackend();
+            const first = insertMemory(db, {
+                projectPath: "/repo/project",
+                category: "PROJECT_RULES",
+                content: "use bun",
+            });
+            const second = insertMemory(db, {
+                projectPath: "/repo/project",
+                category: "PROJECT_RULES",
+                content: "use bun for everything",
+            });
+            await Bun.sleep(10);
+            capture.retains.length = 0;
+            capture.removes.length = 0;
+
+            const mergeResult = await tools.ctx_memory.execute(
+                {
+                    action: "merge",
+                    ids: [first.id, second.id],
+                    content: "use bun for all the things",
+                },
+                toolContext("ses-dreamer", DREAMER_AGENT),
+            );
+
+            expect(mergeResult).toContain("Merged memories");
+            await Bun.sleep(10);
+            // Merge is a local canonical rewrite — no external retain, no remove.
+            // v1 rule: the canonical document was never externally re-teed.
+            expect(capture.removes.length).toBe(0);
+            expect(capture.retains.length).toBe(0);
+        });
+
+        it("verify rejects non-dreamer agents", async () => {
+            insertMemory(db, {
+                projectPath: "/repo/project",
+                category: "PROJECT_RULES",
+                content: "primary-only memory",
+            });
+
+            // Primary agent tool with default allowedActions = ["write","delete"].
+            // "verify" is a dreamer-only action and the action is not in
+            // allowedActions → rejected with the "not allowed" error.
+            const result = await tools.ctx_memory.execute(
+                { action: "verify", id: 1 },
+                toolContext(),
+            );
+
+            expect(result).toContain("Error");
+            expect(result).toContain("not allowed");
         });
     });
 });

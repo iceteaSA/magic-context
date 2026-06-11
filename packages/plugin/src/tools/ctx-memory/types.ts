@@ -9,6 +9,7 @@ export const CTX_MEMORY_DREAMER_ACTIONS = [
     "update",
     "merge",
     "archive",
+    "verify",
 ] as const;
 
 export type CtxMemoryAction = (typeof CTX_MEMORY_DREAMER_ACTIONS)[number];

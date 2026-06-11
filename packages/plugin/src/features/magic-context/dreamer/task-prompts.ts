@@ -12,6 +12,7 @@ You run during scheduled dream windows to maintain a project's cross-session mem
 - \`action="update", id=N, content="..."\` — rewrite a memory's content
 - \`action="merge", ids=[N,M,...], content="...", category="..."\` — consolidate duplicates into one canonical memory
 - \`action="archive", id=N, reason="..."\` — archive a stale memory with provenance
+- \`action="verify", id=N\` — confirm a memory is still correct (records verification, refreshes long-term memory recency)
 - \`action="write", category="...", content="..."\` — create a new memory
 - \`action="delete", id=N\` — permanently remove a memory
 
@@ -96,7 +97,7 @@ Check verifiable memories against actual repository state. Update stale wording,
    - **PROJECT_RULES**: verify only if they reference specific files or tools
 3. **For each verifiable memory:**
    - Read the actual file or grep for the pattern
-   - If the memory is correct: leave it alone
+   - If the memory is correct: \`ctx_memory(action="verify", id=N)\` — records the verification and refreshes long-term memory recency
    - If the wording is stale but the fact is true: \`ctx_memory(action="update", id=N, content="corrected wording")\`
    - If the memory is clearly wrong: \`ctx_memory(action="archive", id=N, reason="...")\`
 4. **Be conservative.** If you cannot find the referenced code but it might be in a location you haven't checked, do NOT archive. Move on.

@@ -12,16 +12,20 @@ import {
     type Memory,
     type MemoryCategory,
     mergeMemoryStats,
+    removeFromExternalBackend,
     saveEmbedding,
     supersededMemory,
     teeToExternalBackend,
     updateMemorySeenCount,
+    updateMemoryVerification,
+    upsertToExternalBackend,
 } from "../../features/magic-context/memory";
 import {
     embedTextForProject,
     getProjectEmbeddingSnapshot,
 } from "../../features/magic-context/memory/embedding";
 import { invalidateMemory } from "../../features/magic-context/memory/embedding-cache";
+import type { ExternalMemoryRemoveItem } from "../../features/magic-context/memory/external-memory-provider";
 import { computeNormalizedHash } from "../../features/magic-context/memory/normalize-hash";
 import {
     normalizeStoredProjectPath,
@@ -264,6 +268,22 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
                 return `Error: Action '${args.action}' is not allowed in this context.`;
             }
 
+            // Build an ExternalMemoryRemoveItem from a freshly-loaded memory row.
+            // Document identity in the external backend derives from the original
+            // content hash + project identity, so a corrective remove needs the
+            // row AS IT STOOD (not a stale in-memory `memory` from before the
+            // caller mutated it). Used by the delete/archive/update branches.
+            const buildRemoveItem = (
+                memory: { content: string; category: Memory["category"] },
+                projectIdentity: string,
+            ): ExternalMemoryRemoveItem => ({
+                content: memory.content,
+                category: memory.category as MemoryCategory,
+                scope: "project",
+                projectIdentity,
+                ...(toolContext.directory ? { projectName: basename(toolContext.directory) } : {}),
+            });
+
             // Resolve the session's actual project from `toolContext.directory`
             // each call. OpenCode's top-level `ctx.directory` (the launch dir)
             // can differ from the session's working directory when the user
@@ -362,6 +382,9 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
                         targetMemoryId: memoryId,
                     });
                 })();
+                // Corrective propagation: the fact is gone locally → delete the
+                // external document (cascades to derived observations).
+                void removeFromExternalBackend([buildRemoveItem(memory, projectIdentity)]);
                 return `Archived memory [ID: ${memoryId}].`;
             }
 
@@ -426,6 +449,28 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
                     memoryId: memory.id,
                     content,
                 });
+
+                // Corrective propagation: drop the STALE external document (old
+                // content hash) and tee the corrected fact as a new document. The
+                // local row's content rewrite already happened in the transaction
+                // above, so `memory.content` is still the OLD content and
+                // `content` is the NEW content — both needed for the
+                // remove-then-tee cascade.
+                void removeFromExternalBackend([buildRemoveItem(memory, projectIdentity)]);
+                void teeToExternalBackend("agent", [
+                    {
+                        content,
+                        category: memory.category as MemoryCategory,
+                        scope: "project",
+                        projectIdentity,
+                        ...(toolContext.directory
+                            ? { projectName: basename(toolContext.directory) }
+                            : {}),
+                        sourceType:
+                            toolContext.agent === DREAMER_AGENT ? "dreamer" : getSourceType(deps),
+                        sessionId: toolContext.sessionID,
+                    },
+                ]);
 
                 return `Updated memory [ID: ${memory.id}] in ${memory.category}.`;
             }
@@ -606,9 +651,45 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
                         targetMemoryId: memoryId,
                     });
                 })();
+                // Corrective propagation: the fact is gone locally (archived, not
+                // merely hidden) → drop the external document.
+                void removeFromExternalBackend([buildRemoveItem(memory, projectIdentity)]);
                 return args.reason?.trim()
                     ? `Archived memory [ID: ${memoryId}] (${args.reason.trim()}).`
                     : `Archived memory [ID: ${memoryId}].`;
+            }
+
+            if (args.action === "verify") {
+                if (typeof args.id !== "number" || !Number.isInteger(args.id)) {
+                    return "Error: 'id' is required when action is 'verify'.";
+                }
+                const rawProjectPath = projectPathForMemoryId(deps.db, args.id);
+                const memory = getMemoryById(deps.db, args.id);
+                if (!memory || !rawProjectPath || !memoryBelongsToProject(memory, projectPath)) {
+                    return `Error: Memory with ID ${args.id} was not found.`;
+                }
+                const projectIdentity = projectIdentityForStoredPath(rawProjectPath);
+                updateMemoryVerification(deps.db, memory.id, "verified");
+                // Verbatim re-retain = same document_id = server-side upsert →
+                // refreshes Hindsight's mentioned_at recency with ZERO duplicate
+                // risk. verifiedAt lands in metadata.verified_at.
+                void upsertToExternalBackend([
+                    {
+                        content: memory.content,
+                        category: memory.category as MemoryCategory,
+                        scope: "project",
+                        projectIdentity,
+                        ...(toolContext.directory
+                            ? { projectName: basename(toolContext.directory) }
+                            : {}),
+                        sourceType: "dreamer",
+                        sessionId: toolContext.sessionID,
+                        verifiedAt: Date.now(),
+                    },
+                ]);
+                // No queueMemoryMutation: verification status is not rendered in
+                // memory lines, so the cached m[0]/m[1] bytes are unaffected.
+                return `Verified memory [ID: ${memory.id}].`;
             }
 
             return "Error: Unknown action.";
