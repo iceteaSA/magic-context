@@ -1,10 +1,7 @@
 import type { ExternalMemoryConfig } from "../../../config/schema/magic-context";
 import { log } from "../../../shared/logger";
 import { blockedEmbeddingEndpointReason } from "./embedding-ssrf";
-import type {
-    ExternalMemoryBackend,
-    ExternalMemoryRetainItem,
-} from "./external-memory-provider";
+import type { ExternalMemoryBackend, ExternalMemoryRetainItem } from "./external-memory-provider";
 import { computeNormalizedHash } from "./normalize-hash";
 
 type HindsightConfig = Extract<ExternalMemoryConfig, { provider: "hindsight" }>;

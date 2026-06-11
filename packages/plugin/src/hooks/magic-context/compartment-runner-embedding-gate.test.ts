@@ -49,7 +49,7 @@ describe("compartment embedding gate (provider, not memory)", () => {
 
         const db = openDatabase();
         const client = createRecompClient(
-            "<compartment start=\"1\" end=\"2\" title=\"Recovered\">Summary</compartment>",
+            '<compartment start="1" end="2" title="Recovered">Summary</compartment>',
         );
         const ensureProjectRegistered = mock(async () => {});
 
@@ -87,7 +87,7 @@ describe("compartment embedding gate (provider, not memory)", () => {
 
         const db = openDatabase();
         const client = createRecompClient(
-            "<compartment start=\"1\" end=\"2\" title=\"Recovered\">Summary</compartment>",
+            '<compartment start="1" end="2" title="Recovered">Summary</compartment>',
         );
         const ensureProjectRegistered = mock(async () => {});
 

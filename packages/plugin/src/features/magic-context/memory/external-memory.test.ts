@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { ExternalMemoryBackend, ExternalMemoryRetainItem } from "./external-memory-provider";
 import {
     _resetExternalMemoryForTests,
     _setTestExternalBackendFactory,
     initializeExternalMemory,
     teeToExternalBackend,
 } from "./external-memory";
+import type { ExternalMemoryBackend, ExternalMemoryRetainItem } from "./external-memory-provider";
 
 function makeFakeBackend(calls: ExternalMemoryRetainItem[][]): ExternalMemoryBackend {
     return {
