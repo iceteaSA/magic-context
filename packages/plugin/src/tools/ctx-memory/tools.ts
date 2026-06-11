@@ -5,6 +5,7 @@ import { DREAMER_AGENT } from "../../agents/dreamer";
 import {
     archiveMemory,
     CATEGORY_PRIORITY,
+    getExternalMemoryStatus,
     getMemoriesByProject,
     getMemoryByHash,
     getMemoryById,
@@ -262,6 +263,12 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
                 .string()
                 .optional()
                 .describe("Archive reason (optional for archive)"),
+            scope: tool.schema
+                .enum(["project", "global"])
+                .optional()
+                .describe(
+                    'Write only. "project" (default): this project\'s memory store. "global": a cross-project fact (infrastructure, tooling, environment) stored ONLY in the external long-term memory backend — use when the fact is true regardless of which project you are in. Requires an external backend; recallable from the next session onward.',
+                ),
         },
         async execute(args: CtxMemoryArgs, toolContext) {
             if (toolContext.agent !== DREAMER_AGENT && !allowedActions.includes(args.action)) {
@@ -313,6 +320,41 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
                 const category = getValidatedCategory(rawCategory);
                 if (!category) {
                     return `Error: Unknown memory category '${rawCategory}'.`;
+                }
+
+                // Global scope: cross-project knowledge goes to the external
+                // long-term store's main bank ONLY — no local row. The local
+                // store is project-keyed; parking globals under a pseudo-project
+                // would corrupt the id-addressable curation model (update/
+                // archive/dreamer flows). Server-side document_id idempotency
+                // (content-hash-derived) replaces the local hash dedup, so a
+                // re-write of the same fact upserts instead of duplicating.
+                // projectIdentity/projectName ride along as ORIGIN provenance
+                // (origin-* tags + extraction context), NOT as routing — the
+                // item still lands in the main bank with scope:global, but the
+                // engine links the originating project as an entity so the
+                // fact surfaces when any project references it by name.
+                if (args.scope === "global") {
+                    if (!getExternalMemoryStatus()) {
+                        return "Error: scope 'global' requires an external memory backend (memory.external) — none is configured. Use the default project scope instead.";
+                    }
+                    void teeToExternalBackend("agent", [
+                        {
+                            content,
+                            category,
+                            scope: "global",
+                            projectIdentity: projectPath,
+                            ...(toolContext.directory
+                                ? { projectName: basename(toolContext.directory) }
+                                : {}),
+                            sourceType:
+                                toolContext.agent === DREAMER_AGENT
+                                    ? "dreamer"
+                                    : getSourceType(deps),
+                            sessionId: toolContext.sessionID,
+                        },
+                    ]);
+                    return `Queued global memory in ${category} for the long-term store (origin: this project). It has no local ID; it surfaces via the session-start global recall slice and ctx_search source "external" from the next session onward.`;
                 }
 
                 const existingMemory = getMemoryByHash(

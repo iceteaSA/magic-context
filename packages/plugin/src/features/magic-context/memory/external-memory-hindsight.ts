@@ -156,10 +156,31 @@ export class HindsightMemoryBackend implements ExternalMemoryBackend {
                       `project:${item.projectIdentity}`,
                       ...(item.projectName ? [`project-name:${item.projectName}`] : []),
                   ]
-                : [`scope:${item.scope}`];
+                : [
+                      `scope:${item.scope}`,
+                      // Origin provenance for globals: distinct origin-* prefix
+                      // (NOT project:*, which stays the project-partition axis)
+                      // so future filtered recalls can target "globals learned
+                      // in project X" without colliding with project items.
+                      ...(item.scope === "global" && item.projectIdentity
+                          ? [`origin-project:${item.projectIdentity}`]
+                          : []),
+                      ...(item.scope === "global" && item.projectName
+                          ? [`origin-project-name:${item.projectName}`]
+                          : []),
+                  ];
+        // For globals with a known origin, name the project in the extraction
+        // context: Hindsight's fact extractor links the project as an ENTITY,
+        // so graph retrieval surfaces this memory whenever any session — in
+        // any project — recalls with that project's name in the query (the
+        // global slice query always carries the current project name).
+        const context =
+            item.scope === "global" && item.projectName
+                ? `${RETAIN_CONTEXT}; recorded while working on the "${item.projectName}" project`
+                : RETAIN_CONTEXT;
         return {
             content: item.content,
-            context: RETAIN_CONTEXT,
+            context,
             document_id: this.documentIdFor(item),
             metadata: {
                 source: "magic-context",

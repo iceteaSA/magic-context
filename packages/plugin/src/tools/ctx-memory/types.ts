@@ -22,6 +22,10 @@ export interface CtxMemoryArgs {
     ids?: number[];
     limit?: number;
     reason?: string;
+    /** Write-only. "project" (default) = local store + external tee.
+     *  "global" = cross-project fact stored ONLY in the external long-term
+     *  backend's main bank (requires memory.external configured). */
+    scope?: "project" | "global";
 }
 
 export interface CtxMemoryToolDeps {

@@ -264,6 +264,12 @@ export const ExternalRecallConfigSchema = z
             .describe(
                 "Tag filter for the global (main-bank) recall slice, matched with tags_match 'any' (untagged content INCLUDED). Empty = no filter (full autoRecall replacement).",
             ),
+        global_from_prompt: z
+            .boolean()
+            .default(false)
+            .describe(
+                "Include an excerpt of the session's FIRST user prompt in the global-slice recall query (the project name is always included). The first prompt is fixed for the session, so the query — and the frozen recall snapshot — stays deterministic. Default false: pure template query.",
+            ),
         search: z
             .boolean()
             .default(true)
@@ -289,6 +295,7 @@ export const ExternalRecallConfigSchema = z
         max_tokens: 2048,
         dedup_threshold: 0.85,
         global_tags: [],
+        global_from_prompt: false,
         search: true,
         mental_models: true,
         profile_mental_models: ["user-preferences"],

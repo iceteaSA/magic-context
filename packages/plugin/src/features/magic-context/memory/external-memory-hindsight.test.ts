@@ -45,6 +45,7 @@ function makeBackend(mentalModelsEnabled = false): HindsightMemoryBackend {
             max_tokens: 2048,
             dedup_threshold: 0.85,
             global_tags: ["user:test"],
+            global_from_prompt: false,
             search: true,
             mental_models: mentalModelsEnabled,
             profile_mental_models: ["user-preferences"],
@@ -125,6 +126,56 @@ describe("HindsightMemoryBackend", () => {
         expect(item.tags).not.toContain("scope:project");
     });
 
+    test("global item with origin: main-bank routing, origin-* tags, project named in context", async () => {
+        const backend = makeBackend();
+        await backend.retain([
+            {
+                content: "Homelab reverse proxy lives on 10.1.1.5 (caddy).",
+                category: "ARCHITECTURE" as const,
+                scope: "global" as const,
+                projectIdentity: "git:abcdef1234567890",
+                projectName: "magic-context",
+                sourceType: "agent" as const,
+            },
+        ]);
+        const post = requests.find((r) => r.init.method === "POST");
+        if (!post) throw new Error("no retain POST");
+        // Origin provenance must NOT change routing: main bank, global doc id.
+        expect(post.url).toContain("main-memory/memories");
+        const item = JSON.parse(String(post.init.body)).items[0];
+        expect(item.document_id).toBe(
+            `mc:global:ARCHITECTURE:${computeNormalizedHash(
+                "Homelab reverse proxy lives on 10.1.1.5 (caddy).",
+            )}`,
+        );
+        expect(item.tags).toContain("scope:global");
+        // origin-* prefix, NOT project:* (the project-partition tag axis).
+        expect(item.tags).toContain("origin-project:git:abcdef1234567890");
+        expect(item.tags).toContain("origin-project-name:magic-context");
+        expect(item.tags.some((t: string) => t.startsWith("project:"))).toBe(false);
+        // Project named in the extraction context → entity linkage for
+        // cross-project by-name recall.
+        expect(item.context).toContain('"magic-context" project');
+        expect(item.metadata.project_path).toBe("git:abcdef1234567890");
+    });
+
+    test("global item WITHOUT origin keeps the bare global shape", async () => {
+        const backend = makeBackend();
+        await backend.retain([
+            {
+                content: "bare global fact",
+                category: "ARCHITECTURE" as const,
+                scope: "global" as const,
+                sourceType: "agent" as const,
+            },
+        ]);
+        const post = requests.find((r) => r.init.method === "POST");
+        const item = JSON.parse(String(post?.init.body)).items[0];
+        expect(item.tags).toContain("scope:global");
+        expect(item.tags.some((t: string) => t.startsWith("origin-"))).toBe(false);
+        expect(item.context).not.toContain("recorded while working");
+    });
+
     test("user item tags carry scope:user and no project tags", async () => {
         const backend = makeBackend();
         await backend.retain([userItem]);
@@ -190,6 +241,7 @@ describe("HindsightMemoryBackend", () => {
                 max_tokens: 2048,
                 dedup_threshold: 0.85,
                 global_tags: [],
+                global_from_prompt: false,
                 search: true,
                 mental_models: false,
                 profile_mental_models: ["user-preferences"],

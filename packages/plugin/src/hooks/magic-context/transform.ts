@@ -1,6 +1,7 @@
 import * as crypto from "node:crypto";
 import { basename } from "node:path";
 import { getLastCompartmentEndMessage } from "../../features/magic-context/compartment-storage";
+import { getExternalRecallConfig } from "../../features/magic-context/memory/external-memory";
 import {
     maybeAwaitExternalRecall,
     startSessionRecall,
@@ -9,7 +10,6 @@ import { resolveProjectIdentity } from "../../features/magic-context/memory/proj
 import { scheduleReconciliation } from "../../features/magic-context/message-index-async";
 import type { Scheduler } from "../../features/magic-context/scheduler";
 import { parseCacheTtl } from "../../features/magic-context/scheduler";
-
 import {
     type ContextDatabase,
     getActiveTagsBySession,
@@ -26,6 +26,7 @@ import type { PluginContext } from "../../plugin/types";
 import { BoundedSessionMap } from "../../shared/bounded-session-map";
 import { getErrorMessage } from "../../shared/error-message";
 import { sessionLog } from "../../shared/logger";
+import { removeSystemReminders } from "../../shared/system-directive";
 import { applyMidTurnDeferral, detectMidTurnBypassReason } from "./boundary-execution";
 import { canConsumeDeferredOnThisPass } from "./cache-busting-signals";
 import { replayCavemanCompression } from "./caveman-cleanup";
@@ -46,7 +47,7 @@ import {
     readRawSessionMessages,
 } from "./read-session-chunk";
 import { findLastAssistantModelFromOpenCodeDb, isMidTurn } from "./read-session-db";
-import { estimateTokens } from "./read-session-formatting";
+import { estimateTokens, extractTexts, hasMeaningfulUserText } from "./read-session-formatting";
 
 import { sendIgnoredMessage } from "./send-session-notification";
 import {
@@ -150,6 +151,25 @@ function findLastAssistantModel(
         }
     }
     return null;
+}
+
+/**
+ * Extract the text of the session's FIRST meaningful user message — the raw
+ * prompt that opened the conversation. Used to enrich the global external
+ * recall query (recall.global_from_prompt). Skips synthetic/ignored parts and
+ * system directives via hasMeaningfulUserText; strips system-reminder blocks
+ * from the extracted text. Returns undefined when no meaningful user message
+ * exists yet (e.g. command-only turns).
+ */
+function extractFirstUserPromptText(messages: MessageLike[]): string | undefined {
+    for (const message of messages) {
+        const info = message.info as { role?: string };
+        if (info.role !== "user") continue;
+        if (!hasMeaningfulUserText(message.parts)) continue;
+        const text = removeSystemReminders(extractTexts(message.parts).join(" ")).trim();
+        return text.length > 0 ? text : undefined;
+    }
+    return undefined;
 }
 
 export interface TransformDeps {
@@ -814,11 +834,21 @@ export function createTransform(deps: TransformDeps) {
                     // ignore — registration is best-effort
                 }
             }
+            // First-prompt enrichment of the global recall slice
+            // (recall.global_from_prompt). Extracted HERE, pre-injection: the
+            // m[0]/m[1] prepends are added later this pass and never persisted
+            // by OpenCode, so the first user message in `messages` is the real
+            // first prompt — immutable for the session, hence deterministic
+            // across passes and crash-recovery re-fires.
+            const firstUserPrompt = getExternalRecallConfig()?.global_from_prompt
+                ? extractFirstUserPromptText(messages)
+                : undefined;
             startSessionRecall({
                 db,
                 sessionId,
                 projectIdentity: resolveProjectIdentity(compartmentDirectory),
                 projectName: basename(compartmentDirectory),
+                ...(firstUserPrompt ? { firstUserPrompt } : {}),
             });
         }
         // Session-scoped project identity for note-nudge and auto-search, which

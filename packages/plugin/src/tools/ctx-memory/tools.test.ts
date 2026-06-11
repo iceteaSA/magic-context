@@ -147,6 +147,7 @@ const HINDSIGHT_TEST_CONFIG = {
         max_tokens: 2048,
         dedup_threshold: 0.85,
         global_tags: [] as string[],
+        global_from_prompt: false,
         search: true,
         mental_models: false,
         profile_mental_models: ["user-preferences"],
@@ -320,6 +321,70 @@ describe("createCtxMemoryTools", () => {
                 scope: "project",
                 sourceType: expect.any(String),
             });
+        });
+
+        it("scope 'global' tees to the main bank with NO local row, carrying origin provenance", async () => {
+            const calls = captureTee();
+
+            const result = await tools.ctx_memory.execute(
+                {
+                    action: "write",
+                    content: "Homelab reverse proxy lives on 10.1.1.5 (caddy).",
+                    category: "ARCHITECTURE",
+                    scope: "global",
+                },
+                toolContext(),
+            );
+            await Bun.sleep(10);
+
+            expect(result).toContain("Queued global memory");
+            expect(result).not.toContain("Saved memory [ID:");
+            // No local row — globals live only in the external store.
+            expect(getMemoriesByProject(db, "/repo/project")).toHaveLength(0);
+            expect(calls.length).toBe(1);
+            // Origin provenance rides along (origin-* tags + context at the
+            // engine layer) while scope stays "global" → main-bank routing.
+            expect(calls[0]?.[0]).toMatchObject({
+                content: "Homelab reverse proxy lives on 10.1.1.5 (caddy).",
+                category: "ARCHITECTURE",
+                scope: "global",
+                projectIdentity: "/repo/project",
+            });
+        });
+
+        it("scope 'global' errors (and stays local-row-free) when no external backend is configured", async () => {
+            // No captureBackend() call → provider stays "off".
+            const result = await tools.ctx_memory.execute(
+                {
+                    action: "write",
+                    content: "orphan global fact",
+                    category: "ARCHITECTURE",
+                    scope: "global",
+                },
+                toolContext(),
+            );
+
+            expect(result).toContain("Error: scope 'global' requires an external memory backend");
+            expect(getMemoriesByProject(db, "/repo/project")).toHaveLength(0);
+        });
+
+        it("scope 'project' (explicit) behaves exactly like the default", async () => {
+            const calls = captureTee();
+
+            const result = await tools.ctx_memory.execute(
+                {
+                    action: "write",
+                    content: "explicit project fact",
+                    category: "ARCHITECTURE",
+                    scope: "project",
+                },
+                toolContext(),
+            );
+            await Bun.sleep(10);
+
+            expect(result).toContain("Saved memory [ID:");
+            expect(getMemoriesByProject(db, "/repo/project")).toHaveLength(1);
+            expect(calls[0]?.[0]).toMatchObject({ scope: "project" });
         });
 
         it("does NOT tee when memory already exists", async () => {

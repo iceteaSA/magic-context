@@ -44,6 +44,7 @@ const HINDSIGHT_TEST_CONFIG = {
         max_tokens: 2048,
         dedup_threshold: 0.85,
         global_tags: [] as string[],
+        global_from_prompt: false,
         search: true,
         mental_models: false,
         profile_mental_models: ["user-preferences"],

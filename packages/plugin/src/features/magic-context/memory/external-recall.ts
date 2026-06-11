@@ -50,6 +50,11 @@ export function startSessionRecall(args: {
     sessionId: string;
     projectIdentity: string;
     projectName: string;
+    /** Excerpt of the session's FIRST user prompt — enriches the global-slice
+     *  query when `recall.global_from_prompt` is enabled. The first prompt is
+     *  immutable for the session, so the query (and therefore the frozen
+     *  snapshot) stays deterministic across crash-recovery re-fires. */
+    firstUserPrompt?: string;
 }): void {
     try {
         const config = getExternalRecallConfig();
@@ -119,8 +124,34 @@ async function sliceWithMentalModelFastPath(
     return recallFallback();
 }
 
+/** Max characters of first-prompt text folded into the global recall query.
+ *  Long prompts dilute the semantic signal and bloat the recall request. */
+const GLOBAL_QUERY_PROMPT_EXCERPT_CHARS = 400;
+
+/** Normalize a first-prompt excerpt for query embedding: collapse whitespace
+ *  (multi-line prompts must not break the query shape) and cap length. */
+export function normalizePromptExcerpt(prompt: string | undefined): string {
+    if (!prompt) return "";
+    return prompt.replace(/\s+/g, " ").trim().slice(0, GLOBAL_QUERY_PROMPT_EXCERPT_CHARS);
+}
+
+function buildGlobalQuery(args: { projectName: string; firstUserPrompt?: string }): string {
+    const base = `infrastructure, environment, tooling, gotchas, and conventions relevant to working on ${args.projectName}`;
+    const excerpt = normalizePromptExcerpt(args.firstUserPrompt);
+    // Project name stays in the query either way — cross-project globals that
+    // mention THIS project by name (origin provenance, entity links) must keep
+    // surfacing even when the prompt is about something else entirely.
+    return excerpt ? `${base}; current task: ${excerpt}` : base;
+}
+
 async function runSessionRecall(
-    args: { db: Database; sessionId: string; projectIdentity: string; projectName: string },
+    args: {
+        db: Database;
+        sessionId: string;
+        projectIdentity: string;
+        projectName: string;
+        firstUserPrompt?: string;
+    },
     config: NonNullable<ReturnType<typeof getExternalRecallConfig>>,
 ): Promise<void> {
     const [project, profile, global] = await Promise.all([
@@ -147,9 +178,18 @@ async function runSessionRecall(
                 maxTokens: config.max_tokens,
             }),
         ),
-        // Global slice always uses full recall — no fast path.
+        // Global slice always uses full recall — no fast path. The query is
+        // optionally enriched with the session's first user prompt
+        // (recall.global_from_prompt) so cross-project knowledge relevant to
+        // the task at hand — e.g. globals that name ANOTHER project the
+        // prompt mentions — surfaces without an explicit ctx_search.
         recallFromExternalBackend({
-            query: `infrastructure, environment, tooling, gotchas, and conventions relevant to working on ${args.projectName}`,
+            query: buildGlobalQuery({
+                projectName: args.projectName,
+                ...(config.global_from_prompt && args.firstUserPrompt
+                    ? { firstUserPrompt: args.firstUserPrompt }
+                    : {}),
+            }),
             scope: "global",
             maxTokens: config.max_tokens,
         }),

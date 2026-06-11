@@ -15,6 +15,7 @@ import type { ExternalMemoryBackend, ExternalMemoryRecallQuery } from "./externa
 import {
     _resetExternalRecallForTests,
     maybeAwaitExternalRecall,
+    normalizePromptExcerpt,
     startSessionRecall,
     waitForSessionRecall,
 } from "./external-recall";
@@ -58,6 +59,7 @@ const HINDSIGHT_TEST_CONFIG = {
         max_tokens: 2048,
         dedup_threshold: 0.85,
         global_tags: [] as string[],
+        global_from_prompt: false,
         search: true,
         mental_models: false,
         profile_mental_models: ["user-preferences"],
@@ -136,6 +138,63 @@ describe("startSessionRecall", () => {
         expect(projectQuery?.projectIdentity).toBe(ARGS.projectIdentity);
         expect(projectQuery?.projectName).toBe(ARGS.projectName);
         expect(projectQuery?.maxTokens).toBe(2048);
+    });
+
+    test("global_from_prompt=false ignores firstUserPrompt (pure template query)", async () => {
+        const captured: ExternalMemoryRecallQuery[] = [];
+        _setTestExternalBackendFactory(() => recallBackend({}, captured));
+        initializeExternalMemory(HINDSIGHT_TEST_CONFIG);
+        startSessionRecall({ db: db!, ...ARGS, firstUserPrompt: "fix the flaky auth test" });
+        await waitForSessionRecall(ARGS.sessionId, 5000);
+        const globalQuery = captured.find((q) => q.scope === "global");
+        expect(globalQuery?.query).toContain(ARGS.projectName);
+        expect(globalQuery?.query).not.toContain("fix the flaky auth test");
+        expect(globalQuery?.query).not.toContain("current task:");
+    });
+
+    test("global_from_prompt=true enriches the global query with a normalized prompt excerpt", async () => {
+        const captured: ExternalMemoryRecallQuery[] = [];
+        _setTestExternalBackendFactory(() => recallBackend({}, captured));
+        initializeExternalMemory({
+            ...HINDSIGHT_TEST_CONFIG,
+            recall: { ...HINDSIGHT_TEST_CONFIG.recall, global_from_prompt: true },
+        });
+        startSessionRecall({
+            db: db!,
+            ...ARGS,
+            firstUserPrompt: "  fix the flaky\n   auth test in project-zeta  ",
+        });
+        await waitForSessionRecall(ARGS.sessionId, 5000);
+        const globalQuery = captured.find((q) => q.scope === "global");
+        // Project name ALWAYS stays in the query (cross-project by-name links).
+        expect(globalQuery?.query).toContain(ARGS.projectName);
+        // Whitespace collapsed, prompt content present.
+        expect(globalQuery?.query).toContain(
+            "current task: fix the flaky auth test in project-zeta",
+        );
+        // Project + profile slices stay deterministic templates regardless.
+        const projectQuery = captured.find((q) => q.scope === "project");
+        expect(projectQuery?.query).not.toContain("current task:");
+    });
+
+    test("global_from_prompt=true without a prompt falls back to the template query", async () => {
+        const captured: ExternalMemoryRecallQuery[] = [];
+        _setTestExternalBackendFactory(() => recallBackend({}, captured));
+        initializeExternalMemory({
+            ...HINDSIGHT_TEST_CONFIG,
+            recall: { ...HINDSIGHT_TEST_CONFIG.recall, global_from_prompt: true },
+        });
+        startSessionRecall({ db: db!, ...ARGS });
+        await waitForSessionRecall(ARGS.sessionId, 5000);
+        const globalQuery = captured.find((q) => q.scope === "global");
+        expect(globalQuery?.query).toContain(ARGS.projectName);
+        expect(globalQuery?.query).not.toContain("current task:");
+    });
+
+    test("normalizePromptExcerpt collapses whitespace and caps length", () => {
+        expect(normalizePromptExcerpt("  a\n\n  b\tc  ")).toBe("a b c");
+        expect(normalizePromptExcerpt(undefined)).toBe("");
+        expect(normalizePromptExcerpt("x".repeat(1000)).length).toBe(400);
     });
 
     test("single-fire: second start joins, no duplicate recalls", async () => {

@@ -9,7 +9,11 @@ export interface ExternalMemoryRetainItem {
     content: string;
     /** MemoryCategory or the pseudo-category "USER_PROFILE" (user memories). */
     category: MemoryCategory | "USER_PROFILE";
-    /** "project" items carry projectIdentity/projectName; "user"/"global" carry neither. */
+    /** "project" items carry projectIdentity/projectName (partition key).
+     *  "global" items MAY carry them as ORIGIN provenance — they still route
+     *  to the main bank, but the engine records which project the fact was
+     *  learned in (tags + extraction context) so cross-project recall can
+     *  link the fact to its project by name. "user" items carry neither. */
     scope: ExternalMemoryScope;
     /** resolveProjectIdentity() result — "git:<sha>" or "dir:<md5-12>". */
     projectIdentity?: string;

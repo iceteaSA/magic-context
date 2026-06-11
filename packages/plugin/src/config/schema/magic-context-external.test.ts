@@ -20,6 +20,7 @@ describe("MagicContextConfigSchema memory.external.recall", () => {
             max_tokens: 2048,
             dedup_threshold: 0.85,
             global_tags: [],
+            global_from_prompt: false,
             search: true,
             mental_models: true,
             profile_mental_models: ["user-preferences"],
