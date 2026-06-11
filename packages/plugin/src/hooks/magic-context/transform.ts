@@ -1,5 +1,10 @@
 import * as crypto from "node:crypto";
+import { basename } from "node:path";
 import { getLastCompartmentEndMessage } from "../../features/magic-context/compartment-storage";
+import {
+    maybeAwaitExternalRecall,
+    startSessionRecall,
+} from "../../features/magic-context/memory/external-recall";
 import { resolveProjectIdentity } from "../../features/magic-context/memory/project-identity";
 import { scheduleReconciliation } from "../../features/magic-context/message-index-async";
 import type { Scheduler } from "../../features/magic-context/scheduler";
@@ -790,6 +795,19 @@ export function createTransform(deps: TransformDeps) {
         const projectIdentity = deps.memoryConfig?.enabled
             ? resolveProjectIdentity(compartmentDirectory || process.cwd())
             : undefined;
+
+        // External memory v2: fire the once-per-session recall. Independent of
+        // memory.enabled (external knowledge is useful with the local store
+        // off) — identity computed from the directory directly. Internally
+        // gated on provider/recall.enabled/already-settled; fire-and-forget.
+        if (fullFeatureMode && compartmentDirectory) {
+            startSessionRecall({
+                db,
+                sessionId,
+                projectIdentity: resolveProjectIdentity(compartmentDirectory),
+                projectName: basename(compartmentDirectory),
+            });
+        }
         // Session-scoped project identity for note-nudge and auto-search, which
         // must target the SESSION's project — not the launch cwd. `deps.projectPath`
         // is resolved once at hook init from the launch directory; on
@@ -1249,6 +1267,18 @@ export function createTransform(deps: TransformDeps) {
             : rebuiltHistoryFromInitialPrepare || compartmentPhase.rebuiltHistoryThisPass;
 
         const tPostProcess = performance.now();
+        // External memory v2 hybrid A-path: when the FIRST m[0] render is
+        // imminent (no cached baseline — the provider cache is already cold),
+        // give the in-flight recall up to recall.timeout_ms to land so the
+        // first materialization bakes it in. Never fires once a baseline
+        // exists; late recalls ride the m[1] delta instead.
+        if (fullFeatureMode) {
+            await maybeAwaitExternalRecall({
+                db,
+                sessionId,
+                hasCachedM0: sessionMeta.cachedM0Bytes !== null,
+            });
+        }
         await runPostTransformPhase({
             sessionId,
             db,
