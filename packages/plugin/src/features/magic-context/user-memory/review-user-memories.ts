@@ -8,7 +8,8 @@ import { log } from "../../../shared/logger";
 import type { Database } from "../../../shared/sqlite";
 import { renewLease } from "../dreamer/lease";
 import { DREAMER_SYSTEM_PROMPT } from "../dreamer/task-prompts";
-import { teeToExternalBackend } from "../memory/external-memory";
+import { removeFromExternalBackend, teeToExternalBackend } from "../memory/external-memory";
+import type { ExternalMemoryRemoveItem } from "../memory/external-memory-provider";
 import { bumpProjectUserProfileVersion } from "../storage";
 import { recordChildInvocation } from "../subagent-token-capture";
 import {
@@ -246,6 +247,12 @@ If no promotions are warranted, return empty arrays. Always consume reviewed can
         const dismissals = (parsed.dismiss_existing ?? []).filter((d) => Boolean(d.memory_id));
         const consumeCandidateIds = parsed.consume_candidate_ids ?? [];
 
+        // Snapshot of pre-mutation content for every stable memory touched by
+        // this pass — needed to compute the corrective remove items for the
+        // external store AFTER the transaction (the new content is already
+        // persisted at that point).
+        const stableContentById = new Map(stableMemories.map((m) => [m.id, m.content]));
+
         args.db.transaction(() => {
             for (const promotion of promotions) {
                 insertUserMemory(args.db, promotion.content, promotion.candidateIds);
@@ -272,6 +279,47 @@ If no promotions are warranted, return empty arrays. Always consume reviewed can
         result.merged = updates.length;
         result.dismissed = dismissals.length;
         result.candidatesConsumed = consumeCandidateIds.length;
+
+        // Corrective propagation (W2): dismissed/updated stable user memories
+        // must leave the external store too, or the profile recall slice will
+        // resurrect them next session. Updates also re-tee the new content so
+        // the fresh text lands in the main bank immediately (the next recall
+        // would otherwise still surface the stale content via hash mismatch).
+        const removedItems: ExternalMemoryRemoveItem[] = [];
+        for (const dismissal of dismissals) {
+            const oldContent = stableContentById.get(dismissal.memory_id);
+            if (oldContent) {
+                removedItems.push({
+                    content: oldContent,
+                    category: "USER_PROFILE",
+                    scope: "user",
+                });
+            }
+        }
+        for (const update of updates) {
+            const oldContent = stableContentById.get(update.memoryId);
+            if (oldContent && oldContent !== update.content) {
+                removedItems.push({
+                    content: oldContent,
+                    category: "USER_PROFILE",
+                    scope: "user",
+                });
+            }
+        }
+        if (removedItems.length > 0) {
+            void removeFromExternalBackend(removedItems);
+        }
+        if (updates.length > 0) {
+            void teeToExternalBackend(
+                "dreamer",
+                updates.map((update) => ({
+                    content: update.content,
+                    category: "USER_PROFILE" as const,
+                    scope: "user" as const,
+                    sourceType: "dreamer" as const,
+                })),
+            );
+        }
 
         if (promotions.length > 0) {
             void teeToExternalBackend(
