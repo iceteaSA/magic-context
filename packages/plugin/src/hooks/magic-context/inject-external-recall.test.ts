@@ -309,6 +309,85 @@ describe("external recall in m[0]/m[1]", () => {
         );
     });
 
+    test("BLOCKING-residual: sibling-replay path does NOT pressure-refold on replayed m[1] bytes (even if those bytes contain a large external delta)", () => {
+        // Residual of the BLOCKING finding: the softRefresh sibling-adoption
+        // path (row-mismatch → adopt sibling's cached m[1]) used to return
+        // m1Recomputed=true unconditionally, so the pressure backstop would
+        // run on REPLAYED bytes. If the sibling's m[1] happened to contain a
+        // large late external delta, the backstop could fold it into m[0] —
+        // i.e. late recall could still trigger a refold via the sibling path.
+        //
+        // Setup:
+        //   1. Materialize m[0] with no recall → DB row is small.
+        //   2. Manually overwrite DB cached_m1_bytes with a sibling's m[1]
+        //      that contains a LARGE <external-memory> delta (a frozen
+        //      "sibling already settled recall" scenario).
+        //   3. Mutate the in-memory state so cachedRowMatchesState returns
+        //      false (we change a marker that does not affect materialization
+        //      correctness, e.g. cachedM0SystemHash). This forces
+        //      softRefreshCachedM1 into the sibling-adoption branch.
+        //   4. Call injectM0M1 with isCacheBustingPass=true and a tiny
+        //      historyBudgetTokens (so the absolute cap is easy to exceed if
+        //      the backstop runs on replayed bytes).
+        db = makeDb();
+        const projectDirectory = makeProjectDir();
+        appendCompartments(db, SESSION_ID, [compartment(0, "A", "Ax")]);
+        const baseline = injectM0M1({
+            ...buildOptions(),
+            projectDirectory,
+            historyBudgetTokens: 60,
+        });
+        expect(baseline.decision.reason).toBe("first_render");
+        const baselineM0Bytes = baseline.m0Bytes;
+
+        // Overwrite the DB's cached m[1] with a sibling's m[1] containing a
+        // large external delta block. The backstop, if it ran on these
+        // replayed bytes, would trip the absolute cap and force a refold.
+        const bigRecallBlock =
+            `<external-memory source="hindsight">\n` +
+            Array.from({ length: 200 }, (_, i) => `- ${"y".repeat(200)} ${i}`).join("\n") +
+            `\n</external-memory>`;
+        const siblingM1 =
+            `<session-history-since>\n${bigRecallBlock}\n</session-history-since>`;
+        db.prepare(
+            "UPDATE session_meta SET cached_m1_bytes = ? WHERE session_id = ?",
+        ).run(Buffer.from(siblingM1, "utf8"), SESSION_ID);
+
+        // Force a row mismatch on a marker that does not affect
+        // materialization correctness OR fire mustMaterialize. We pick
+        // cachedM0MaxCompartmentSeq — it is in cachedRowMatchesState (so
+        // softRefresh takes the sibling-adoption path) but is deliberately
+        // NOT a mustMaterialize trigger (new compartments are an m[1] delta,
+        // not a fold signal — see the comment in mustMaterialize). This
+        // isolates the test to the pressure-backstop behavior we want to
+        // guard, without any HARD trigger firing.
+        const state = getOrCreateSessionMeta(db, SESSION_ID) as unknown as M0M1State;
+        state.cachedM0MaxCompartmentSeq = 999_999;
+
+        // Cache-busting pass with no HARD signal — only the pressure backstop
+        // could refold, and only IF the sibling-replay path still sets
+        // m1Recomputed=true. The fix marks sibling replay recomputed=false.
+        const result = injectM0M1({
+            ...buildOptions(),
+            state,
+            projectDirectory,
+            historyBudgetTokens: 60,
+            isCacheBustingPass: true,
+            hardSignals: BASE_HARD,
+        });
+
+        // No refold: the backstop must skip replayed sibling bytes.
+        expect(result.m0RematerializedThisPass).toBe(false);
+        const row = db
+            .prepare("SELECT cached_m0_bytes FROM session_meta WHERE session_id = ?")
+            .get(SESSION_ID) as { cached_m0_bytes: Buffer | Uint8Array | null } | null;
+        const persisted = row?.cached_m0_bytes ? Buffer.from(row.cached_m0_bytes) : null;
+        expect(persisted?.equals(baselineM0Bytes)).toBe(true);
+        // The model still sees the recall this pass (replayed from sibling).
+        expect(result.m1Text).toContain("<external-memory");
+        expect(result.m1Text).toContain("yyy"); // the big token
+    });
+
     test("HARD fold reconciles: after re-materialize, delta disappears", () => {
         db = makeDb();
         const projectDirectory = makeProjectDir();

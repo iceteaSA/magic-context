@@ -11,8 +11,15 @@ const rawMessagesBySession = new Map<
 >();
 
 import { closeQuietly } from "../../shared/sqlite-helpers";
+import { ensureSessionMetaRow } from "./storage-meta-shared";
 import { replaceSessionFacts } from "./compartment-storage";
 import { getMemoryById, insertMemory, resetEmbeddingCacheForTests, saveEmbedding } from "./memory";
+import {
+    _resetExternalMemoryForTests,
+    _setTestExternalBackendFactory,
+    initializeExternalMemory,
+} from "./memory/external-memory";
+import type { ExternalMemoryBackend } from "./memory/external-memory-provider";
 import { ensureMessagesIndexed } from "./message-index";
 import { runMigrations } from "./migrations";
 import { unifiedSearch } from "./search";
@@ -41,6 +48,7 @@ afterEach(() => {
     embeddingQueries.length = 0;
     rawMessagesBySession.clear();
     resetEmbeddingCacheForTests();
+    _resetExternalMemoryForTests();
 });
 
 describe("unifiedSearch", () => {
@@ -516,5 +524,146 @@ describe("unifiedSearch", () => {
         // Even with two embed-needing branches active, the query is embedded
         // exactly once. Pre-fix this would have been 2.
         expect(embeddingQueries).toEqual(["shared embed query"]);
+    });
+});
+
+const HINDSIGHT_TEST_CONFIG = {
+    provider: "hindsight" as const,
+    endpoint: "http://10.1.0.99:8889",
+    project_bank: "mc-{name}-{id8}",
+    main_bank: "icetea-main",
+    retain_sources: ["historian", "agent", "dreamer"] as ("historian" | "agent" | "dreamer")[],
+    tags: [] as string[],
+    recall: {
+        enabled: true,
+        timeout_ms: 3000,
+        max_tokens: 2048,
+        dedup_threshold: 0.85,
+        global_tags: [] as string[],
+        search: true,
+        mental_models: false,
+        profile_mental_models: ["user-preferences"],
+    },
+};
+
+describe("external search source", () => {
+    let db: Database;
+    const sessionId = "ses-external";
+    const projectPath = "/repo/project";
+
+    beforeEach(() => {
+        db = createTestDb();
+        // v31 columns require a session_meta row before the UPDATE in the
+        // snapshot-seeding test can land. createTestDb already runs migrations.
+        ensureSessionMetaRow(db, sessionId);
+    });
+
+    afterEach(() => {
+        closeQuietly(db);
+    });
+
+    it("explicit search with external enabled returns external hits", async () => {
+        _setTestExternalBackendFactory(
+            (): ExternalMemoryBackend => ({
+                backendId: "fake:search",
+                initialize: async () => true,
+                retain: async () => 0,
+                recall: async (query) =>
+                    query.scope === "project"
+                        ? [{ content: "external project hit" }]
+                        : [{ content: "external global hit" }],
+                dispose: async () => {},
+            }),
+        );
+        initializeExternalMemory(HINDSIGHT_TEST_CONFIG);
+
+        const results = await unifiedSearch(db, sessionId, projectPath, "query", {
+            explicitSearch: true,
+        });
+        const external = results.filter((r) => r.source === "external");
+        expect(external.length).toBeGreaterThan(0);
+        expect(external.map((r) => r.content)).toContain("external project hit");
+    });
+
+    it("non-explicit search never calls external", async () => {
+        let called = 0;
+        _setTestExternalBackendFactory(
+            (): ExternalMemoryBackend => ({
+                backendId: "fake:search",
+                initialize: async () => true,
+                retain: async () => 0,
+                recall: async () => {
+                    called += 1;
+                    return [];
+                },
+                dispose: async () => {},
+            }),
+        );
+        initializeExternalMemory(HINDSIGHT_TEST_CONFIG);
+
+        await unifiedSearch(db, sessionId, projectPath, "query", {
+            explicitSearch: false,
+        });
+        expect(called).toBe(0);
+    });
+
+    it("external excluded when recall.search false", async () => {
+        let called = 0;
+        _setTestExternalBackendFactory(
+            (): ExternalMemoryBackend => ({
+                backendId: "fake:search",
+                initialize: async () => true,
+                retain: async () => 0,
+                recall: async () => {
+                    called += 1;
+                    return [];
+                },
+                dispose: async () => {},
+            }),
+        );
+        initializeExternalMemory({
+            ...HINDSIGHT_TEST_CONFIG,
+            recall: { ...HINDSIGHT_TEST_CONFIG.recall, search: false },
+        });
+
+        await unifiedSearch(db, sessionId, projectPath, "query", {
+            explicitSearch: true,
+        });
+        expect(called).toBe(0);
+    });
+
+    it("external hits already injected this session are filtered out", async () => {
+        db.prepare(
+            "UPDATE session_meta SET external_recall_state='done', external_recall_json=? WHERE session_id = ?",
+        ).run(
+            JSON.stringify({
+                project: [{ content: "already injected" }],
+                profile: [],
+                global: [],
+            }),
+            sessionId,
+        );
+        _setTestExternalBackendFactory(
+            (): ExternalMemoryBackend => ({
+                backendId: "fake:search",
+                initialize: async () => true,
+                retain: async () => 0,
+                recall: async () => [
+                    { content: "already injected" },
+                    { content: "fresh hit" },
+                ],
+                dispose: async () => {},
+            }),
+        );
+        initializeExternalMemory(HINDSIGHT_TEST_CONFIG);
+
+        const results = await unifiedSearch(db, sessionId, projectPath, "query", {
+            explicitSearch: true,
+        });
+        const contents = results
+            .filter((r) => r.source === "external")
+            .map((r) => r.content);
+        expect(contents).not.toContain("already injected");
+        expect(contents).toContain("fresh hit");
     });
 });
