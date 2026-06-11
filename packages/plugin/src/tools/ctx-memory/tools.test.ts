@@ -8,6 +8,15 @@ import {
     insertMemory,
     normalizeStoredProjectPath,
 } from "../../features/magic-context";
+import {
+    _resetExternalMemoryForTests,
+    _setTestExternalBackendFactory,
+    initializeExternalMemory,
+} from "../../features/magic-context/memory/external-memory";
+import type {
+    ExternalMemoryBackend,
+    ExternalMemoryRetainItem,
+} from "../../features/magic-context/memory/external-memory-provider";
 import { Database } from "../../shared/sqlite";
 import { closeQuietly } from "../../shared/sqlite-helpers";
 
@@ -124,6 +133,32 @@ function getMutationRows(db: Database, projectPath: string, renderedMemoryIds: n
     );
 }
 
+const HINDSIGHT_TEST_CONFIG = {
+    provider: "hindsight" as const,
+    endpoint: "http://10.1.1.1:8889",
+    project_bank: "mc-{name}-{id8}",
+    main_bank: "icetea-main",
+    retain_sources: ["historian", "agent", "dreamer"] as ("historian" | "agent" | "dreamer")[],
+    tags: [] as string[],
+};
+
+function captureTee(): ExternalMemoryRetainItem[][] {
+    const calls: ExternalMemoryRetainItem[][] = [];
+    _setTestExternalBackendFactory(
+        (): ExternalMemoryBackend => ({
+            backendId: "fake:test",
+            initialize: async () => true,
+            retain: async (items) => {
+                calls.push([...items]);
+                return items.length;
+            },
+            dispose: async () => {},
+        }),
+    );
+    initializeExternalMemory(HINDSIGHT_TEST_CONFIG);
+    return calls;
+}
+
 afterAll(() => {
     mock.restore();
 });
@@ -144,6 +179,7 @@ describe("createCtxMemoryTools", () => {
 
     afterEach(() => {
         closeQuietly(db);
+        _resetExternalMemoryForTests();
     });
 
     describe("#given write action", () => {
@@ -236,6 +272,54 @@ describe("createCtxMemoryTools", () => {
 
             expect(memories).toHaveLength(1);
             expect(memories[0]?.projectPath).toBe("/repo/project");
+        });
+
+        it("tees to external backend with project scope", async () => {
+            const calls = captureTee();
+
+            const result = await tools.ctx_memory.execute(
+                {
+                    action: "write",
+                    content: "agent fact",
+                    category: "ARCHITECTURE",
+                },
+                toolContext(),
+            );
+
+            expect(result).toContain("Saved memory");
+            await Bun.sleep(10);
+
+            expect(calls.length).toBe(1);
+            expect(calls[0]?.[0]).toMatchObject({
+                content: "agent fact",
+                category: "ARCHITECTURE",
+                scope: "project",
+                sourceType: expect.any(String),
+            });
+        });
+
+        it("does NOT tee when memory already exists", async () => {
+            const calls = captureTee();
+
+            await tools.ctx_memory.execute(
+                {
+                    action: "write",
+                    content: "dup",
+                    category: "ARCHITECTURE",
+                },
+                toolContext(),
+            );
+            await tools.ctx_memory.execute(
+                {
+                    action: "write",
+                    content: "dup",
+                    category: "ARCHITECTURE",
+                },
+                toolContext(),
+            );
+            await Bun.sleep(10);
+
+            expect(calls.length).toBe(1);
         });
     });
 

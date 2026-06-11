@@ -1,3 +1,5 @@
+import { basename } from "node:path";
+
 import { embedAndStoreCompartments } from "../../features/magic-context/compartment-embedding";
 import { insertCompartmentEvents } from "../../features/magic-context/compartment-events";
 import {
@@ -475,6 +477,7 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
                 sessionId,
                 resolveProjectIdentity(promotionDirectory),
                 validatedPass.facts ?? [],
+                { projectName: basename(promotionDirectory) },
             );
         }
 

@@ -8,6 +8,7 @@ import { log } from "../../../shared/logger";
 import type { Database } from "../../../shared/sqlite";
 import { renewLease } from "../dreamer/lease";
 import { DREAMER_SYSTEM_PROMPT } from "../dreamer/task-prompts";
+import { teeToExternalBackend } from "../memory/external-memory";
 import { bumpProjectUserProfileVersion } from "../storage";
 import { recordChildInvocation } from "../subagent-token-capture";
 import {
@@ -271,6 +272,18 @@ If no promotions are warranted, return empty arrays. Always consume reviewed can
         result.merged = updates.length;
         result.dismissed = dismissals.length;
         result.candidatesConsumed = consumeCandidateIds.length;
+
+        if (promotions.length > 0) {
+            void teeToExternalBackend(
+                "dreamer",
+                promotions.map((promotion) => ({
+                    content: promotion.content,
+                    category: "USER_PROFILE" as const,
+                    scope: "user" as const,
+                    sourceType: "dreamer" as const,
+                })),
+            );
+        }
 
         for (const promotion of promotions) {
             log(`[dreamer] user-memories: promoted "${promotion.content.slice(0, 60)}..."`);
