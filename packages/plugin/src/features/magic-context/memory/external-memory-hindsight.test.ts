@@ -39,6 +39,16 @@ function makeBackend(): HindsightMemoryBackend {
         main_bank: "icetea-main",
         retain_sources: ["historian", "agent", "dreamer"],
         tags: ["user:icetea"],
+        recall: {
+            enabled: true,
+            timeout_ms: 3000,
+            max_tokens: 2048,
+            dedup_threshold: 0.85,
+            global_tags: ["user:icetea"],
+            search: true,
+            mental_models: false, // recall-only in base backend tests; MM tests come later
+            profile_mental_models: ["user-preferences"],
+        },
     });
 }
 
@@ -170,8 +180,121 @@ describe("HindsightMemoryBackend", () => {
             main_bank: "icetea-main",
             retain_sources: ["historian", "agent", "dreamer"],
             tags: [],
+            recall: {
+                enabled: true,
+                timeout_ms: 3000,
+                max_tokens: 2048,
+                dedup_threshold: 0.85,
+                global_tags: [],
+                search: true,
+                mental_models: false,
+                profile_mental_models: ["user-preferences"],
+            },
         });
         expect(await backend.initialize()).toBe(false);
         expect(await backend.retain([userItem])).toBe(0);
+    });
+});
+
+describe("HindsightMemoryBackend recall/remove", () => {
+    test("project recall hits project bank with types and no tags", async () => {
+        responder = () =>
+            okJson({
+                results: [{ id: "1", text: "fact A", type: "world", tags: ["category:ARCHITECTURE"] }],
+            });
+        const backend = makeBackend();
+        const results = await backend.recall({
+            query: "project rules",
+            scope: "project",
+            projectIdentity: "git:abcdef1234567890",
+            projectName: "magic-context",
+            maxTokens: 1024,
+        });
+        const post = requests.find((r) => r.init.method === "POST");
+        if (!post) throw new Error("no recall POST");
+        expect(post.url).toContain(
+            "/v1/default/banks/mc-magic-context-abcdef12/memories/recall",
+        );
+        const body = JSON.parse(String(post.init.body));
+        expect(body.query).toBe("project rules");
+        expect(body.types).toEqual(["world", "observation"]);
+        expect(body.budget).toBe("mid");
+        expect(body.max_tokens).toBe(1024);
+        expect(body.tags).toBeUndefined();
+        expect(results).toEqual([{ content: "fact A", score: undefined, category: "ARCHITECTURE" }]);
+    });
+
+    test("user recall hits main bank with scope:user any_strict", async () => {
+        responder = () => okJson({ results: [] });
+        const backend = makeBackend();
+        await backend.recall({ query: "user prefs", scope: "user" });
+        const body = JSON.parse(String(requests[0].init.body));
+        expect(requests[0].url).toContain("/v1/default/banks/icetea-main/memories/recall");
+        expect(body.tags).toEqual(["scope:user"]);
+        expect(body.tags_match).toBe("any_strict");
+    });
+
+    test("global recall uses config global_tags with any match", async () => {
+        responder = () => okJson({ results: [] });
+        const backend = makeBackend();
+        await backend.recall({ query: "homelab", scope: "global" });
+        const body = JSON.parse(String(requests[0].init.body));
+        expect(requests[0].url).toContain("/v1/default/banks/icetea-main/memories/recall");
+        expect(body.tags).toEqual(["user:icetea"]);
+        expect(body.tags_match).toBe("any");
+    });
+
+    test("recall 404 (missing project bank) returns [] without opening circuit", async () => {
+        responder = () => new Response("not found", { status: 404 });
+        const backend = makeBackend();
+        const results = await backend.recall({
+            query: "q",
+            scope: "project",
+            projectIdentity: "git:abcdef1234567890",
+            projectName: "magic-context",
+        });
+        expect(results).toEqual([]);
+        expect(backend._getCircuitState()).toBe("closed");
+    });
+
+    test("recall never throws on network error", async () => {
+        globalThis.fetch = (async () => {
+            throw new Error("ECONNREFUSED");
+        }) as typeof fetch;
+        const backend = makeBackend();
+        await expect(backend.recall({ query: "q" })).resolves.toEqual([]);
+    });
+
+    test("remove DELETEs document by derived id; 404 counts as removed", async () => {
+        responder = (url) =>
+            url.includes("/documents/") ? new Response("gone", { status: 404 }) : okJson({});
+        const backend = makeBackend();
+        const removed = await backend.remove([
+            {
+                content: "Always run bun test from packages/plugin",
+                category: "PROJECT_RULES",
+                scope: "project",
+                projectIdentity: "git:abcdef1234567890",
+                projectName: "magic-context",
+            },
+        ]);
+        expect(removed).toBe(1);
+        const del = requests.find((r) => r.init.method === "DELETE");
+        if (!del) throw new Error("no DELETE");
+        const expectedId = `mc:git:abcdef1234567890:PROJECT_RULES:${computeNormalizedHash(
+            "Always run bun test from packages/plugin",
+        )}`;
+        expect(del.url).toContain(
+            `/v1/default/banks/mc-magic-context-abcdef12/documents/${encodeURIComponent(expectedId)}`,
+        );
+        expect(backend._getCircuitState()).toBe("closed");
+    });
+
+    test("retain item verifiedAt lands in metadata.verified_at", async () => {
+        const backend = makeBackend();
+        await backend.retain([{ ...userItem, verifiedAt: 1750000000000 }]);
+        const post = requests.find((r) => r.init.method === "POST");
+        const body = JSON.parse(String(post?.init.body));
+        expect(body.items[0].metadata.verified_at).toBe(1750000000000);
     });
 });

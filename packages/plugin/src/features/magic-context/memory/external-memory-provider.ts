@@ -17,19 +17,33 @@ export interface ExternalMemoryRetainItem {
     projectName?: string;
     sourceType: MemorySourceType;
     sessionId?: string;
+    /** Set on verify-confirmed corrective upserts — maps to engine metadata. */
+    verifiedAt?: number;
 }
 
-/** v2 neutral recall shapes — defined now so the slot is stable, unused in v1. */
+/** v2 neutral recall shapes — engine maps scope to its own partitions/filters. */
 export interface ExternalMemoryRecallQuery {
     query: string;
     scope?: ExternalMemoryScope;
     projectIdentity?: string;
+    /** Needed by bank-template resolution for scope "project". */
+    projectName?: string;
     limit?: number;
+    maxTokens?: number;
 }
 export interface ExternalMemoryRecallResult {
     content: string;
     score?: number;
     category?: string;
+}
+
+/** Corrective removal — document identity derives from the ORIGINAL content. */
+export interface ExternalMemoryRemoveItem {
+    content: string;
+    category: MemoryCategory | "USER_PROFILE";
+    scope: ExternalMemoryScope;
+    projectIdentity?: string;
+    projectName?: string;
 }
 
 export interface ExternalMemoryBackend {
@@ -39,10 +53,12 @@ export interface ExternalMemoryBackend {
     initialize(): Promise<boolean>;
     /** Best-effort batch retain. Never throws; returns count accepted. */
     retain(items: ExternalMemoryRetainItem[], signal?: AbortSignal): Promise<number>;
-    /** v2 slot — unified read path. Optional; unimplemented in v1. */
+    /** v2 unified read. Never throws; [] on failure. */
     recall?(
         query: ExternalMemoryRecallQuery,
         signal?: AbortSignal,
     ): Promise<ExternalMemoryRecallResult[]>;
+    /** v2 corrective removal. Never throws; returns count removed (404 counts: already gone). */
+    remove?(items: ExternalMemoryRemoveItem[], signal?: AbortSignal): Promise<number>;
     dispose(): Promise<void>;
 }
