@@ -2065,6 +2065,7 @@ export function renderM0(args: {
     if (memoriesBlock) sections.push(memoriesBlock);
     if (args.mural?.enabled && args.mural.supportsVision && args.mural.dataUrl) {
         sections.push(MEMORY_MURAL_BLOCK);
+    }
     if (args.externalRecall) {
         const externalBlock = renderExternalMemoryBlock(args.externalRecall);
         if (externalBlock) sections.push(externalBlock);
