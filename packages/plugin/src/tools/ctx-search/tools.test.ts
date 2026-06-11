@@ -3,6 +3,10 @@ import { replaceAllCompartments } from "../../features/magic-context/compartment
 import { insertMemory } from "../../features/magic-context/memory";
 import { _resetExternalMemoryForTests } from "../../features/magic-context/memory/external-memory";
 import { indexMessagesAfterOrdinal } from "../../features/magic-context/message-index";
+import {
+    _resetSessionParentRegistryForTests,
+    registerSessionParent,
+} from "../../features/magic-context/session-parent-registry";
 import { initializeDatabase } from "../../features/magic-context/storage-db";
 import { Database } from "../../shared/sqlite";
 import { closeQuietly } from "../../shared/sqlite-helpers";
@@ -34,6 +38,7 @@ describe("createCtxSearchTools", () => {
     afterEach(() => {
         closeQuietly(db);
         _resetExternalMemoryForTests();
+        _resetSessionParentRegistryForTests();
     });
 
     it("validates required query", async () => {
@@ -127,6 +132,54 @@ describe("createCtxSearchTools", () => {
         expect(result.split(EXPAND_HINT).length - 1).toBe(1);
         expect(result.endsWith(EXPAND_HINT)).toBe(true);
         expect(result).not.toContain("Expand with ctx_expand(start=");
+    });
+
+    it("child session (sidekick) resolves to the parent's history via the parent registry", async () => {
+        // Parent session has compacted history + an indexed message; the child
+        // session has NOTHING (no compartments, no index). Without root
+        // resolution the boundary is 0 and message search is dead in children.
+        replaceAllCompartments(db, "ses-parent", [
+            {
+                sequence: 1,
+                startMessage: 1,
+                endMessage: 10,
+                startMessageId: "m1",
+                endMessageId: "m10",
+                title: "Compartment",
+                content: "Summary",
+            },
+        ]);
+        const indexed = [
+            {
+                ordinal: 5,
+                id: "m5",
+                role: "assistant",
+                parts: [{ type: "text", text: "Alpha migration details are here." }],
+            },
+        ];
+        indexMessagesAfterOrdinal(db, "ses-parent", indexed, 0, 5);
+        const tools = createCtxSearchTools({
+            db,
+            resolveProjectPath: () => "/repo/project",
+            memoryEnabled: false,
+            embeddingEnabled: false,
+            readMessages: () => indexed,
+        });
+
+        // Control: unregistered child finds nothing (live-tail exclusion).
+        const before = await tools.ctx_search.execute(
+            { query: "alpha migration", sources: ["message"] },
+            toolContext("ses-sidekick-child"),
+        );
+        expect(before).toContain("No results found");
+
+        registerSessionParent("ses-sidekick-child", "ses-parent");
+        const after = await tools.ctx_search.execute(
+            { query: "alpha migration", sources: ["message"] },
+            toolContext("ses-sidekick-child"),
+        );
+        expect(after).toContain("[message]");
+        expect(after).toContain("ordinal=5");
     });
 
     it("omits the consolidated expand hint for memory-only results", async () => {

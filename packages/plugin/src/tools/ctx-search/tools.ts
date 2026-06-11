@@ -7,6 +7,7 @@ import {
     getProjectEmbeddingSnapshot,
 } from "../../features/magic-context/memory/embedding";
 import { type UnifiedSearchResult, unifiedSearch } from "../../features/magic-context/search";
+import { resolveRootSessionId } from "../../features/magic-context/session-parent-registry";
 import { getVisibleMemoryIds } from "../../hooks/magic-context/inject-compartments";
 import {
     CTX_SEARCH_DESCRIPTION,
@@ -137,6 +138,14 @@ function createCtxSearchTool(deps: CtxSearchToolDeps): ToolDefinition {
                 return "Error: 'query' is required.";
             }
 
+            // Child sessions (sidekick, task subagents) search the ROOT
+            // conversation: their own session has no indexed messages, no
+            // compartment boundary, and no injection markers, so every
+            // session-scoped read below would silently no-op — dead message
+            // search and disabled already-visible filters. Main sessions
+            // resolve to themselves (registry returns the input unchanged).
+            const searchSessionId = resolveRootSessionId(toolContext.sessionID);
+
             // Only search message history up to the last compartment boundary —
             // anything after that (the live tail, including the current turn) is
             // still in context and already visible to the agent. When NO compartment
@@ -145,13 +154,13 @@ function createCtxSearchTool(deps: CtxSearchToolDeps): ToolDefinition {
             // the live tail and must be excluded. A negative sentinel here would mean
             // "search everything" and leak the current prompt back to the agent — the
             // exact opposite of the intent (issue #131).
-            const lastCompartmentEnd = getLastCompartmentEndMessage(deps.db, toolContext.sessionID);
+            const lastCompartmentEnd = getLastCompartmentEndMessage(deps.db, searchSessionId);
             const messageOrdinalCutoff = lastCompartmentEnd >= 0 ? lastCompartmentEnd : 0;
 
             // Hard-filter memories already rendered in <session-history>.
             // They're visible in message[0], so returning them wastes output
             // tokens and crowds out high-signal raw-history hits.
-            const visibleMemoryIds = getVisibleMemoryIds(deps.db, toolContext.sessionID);
+            const visibleMemoryIds = getVisibleMemoryIds(deps.db, searchSessionId);
 
             // Resolve the session's actual project from `toolContext.directory`
             // each call. OpenCode's top-level `ctx.directory` (the launch dir)
@@ -167,38 +176,30 @@ function createCtxSearchTool(deps: CtxSearchToolDeps): ToolDefinition {
             const gitCommitsEnabled =
                 embeddingSnapshot?.gitCommitEnabled ?? deps.gitCommitsEnabled ?? false;
 
-            const results = await unifiedSearch(
-                deps.db,
-                toolContext.sessionID,
-                projectPath,
-                query,
-                {
-                    limit: normalizeLimit(args.limit),
-                    memoryEnabled,
-                    embeddingEnabled,
-                    embedQuery: async (text, signal) => {
-                        const result = await embedTextForProject(projectPath, text, signal);
-                        return result?.vector ?? null;
-                    },
-                    isEmbeddingRuntimeEnabled: () => embeddingEnabled === true,
-                    readMessages: deps.readMessages,
-                    maxMessageOrdinal: messageOrdinalCutoff,
-                    gitCommitsEnabled,
-                    sources: normalizeSources(args.sources),
-                    visibleMemoryIds,
-                    // Explicit agent search → enable literal-probe multi-query
-                    // recall for symbol/command/path lookups. Auto-search hints
-                    // (the hot path) leave this off to protect their latency.
-                    explicitSearch: true,
-                    // External bank resolution: basename is the human-readable label the
-                    // engine uses as a bank template parameter, NOT a key. Project
-                    // identity (resolveProjectPath's output) is the key.
-                    // isExternalSearchEnabled() is module-level so no override is needed.
-                    projectName: toolContext.directory
-                        ? basename(toolContext.directory)
-                        : undefined,
+            const results = await unifiedSearch(deps.db, searchSessionId, projectPath, query, {
+                limit: normalizeLimit(args.limit),
+                memoryEnabled,
+                embeddingEnabled,
+                embedQuery: async (text, signal) => {
+                    const result = await embedTextForProject(projectPath, text, signal);
+                    return result?.vector ?? null;
                 },
-            );
+                isEmbeddingRuntimeEnabled: () => embeddingEnabled === true,
+                readMessages: deps.readMessages,
+                maxMessageOrdinal: messageOrdinalCutoff,
+                gitCommitsEnabled,
+                sources: normalizeSources(args.sources),
+                visibleMemoryIds,
+                // Explicit agent search → enable literal-probe multi-query
+                // recall for symbol/command/path lookups. Auto-search hints
+                // (the hot path) leave this off to protect their latency.
+                explicitSearch: true,
+                // External bank resolution: basename is the human-readable label the
+                // engine uses as a bank template parameter, NOT a key. Project
+                // identity (resolveProjectPath's output) is the key.
+                // isExternalSearchEnabled() is module-level so no override is needed.
+                projectName: toolContext.directory ? basename(toolContext.directory) : undefined,
+            });
 
             return formatSearchResults(query, results);
         },
