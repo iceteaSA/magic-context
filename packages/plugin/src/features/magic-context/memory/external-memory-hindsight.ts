@@ -360,12 +360,15 @@ export class HindsightMemoryBackend implements ExternalMemoryBackend {
             );
             if (!response) return null;
             const body = (await response.json().catch(() => null)) as {
-                operations?: unknown;
                 total?: unknown;
             } | null;
             if (!body) return null;
-            if (typeof body.total === "number") return body.total;
-            return Array.isArray(body.operations) ? body.operations.length : null;
+            // The live operations envelope (OperationsListResponse) exposes
+            // `total` as the authoritative failed-count. We do NOT fall back
+            // to `operations.length` — a paginated `limit=N` slice can be
+            // smaller than the true total, so that heuristic would understate
+            // the count and silently mask real backend failures.
+            return typeof body.total === "number" ? body.total : null;
         } catch {
             return null;
         }

@@ -334,6 +334,38 @@ describe("HindsightMemoryBackend recall/remove", () => {
         expect(removed).toBe(0);
         expect(requests.filter((r) => r.init.method === "DELETE").length).toBe(0);
     });
+
+    test("fetchFailedRetainCount returns total from the operations envelope", async () => {
+        responder = () => okJson({ total: 7, operations: [] });
+        const backend = makeBackend();
+        expect(await backend.fetchFailedRetainCount()).toBe(7);
+        const get = requests.find((r) => (r.init.method ?? "GET") === "GET");
+        expect(get?.url).toContain("/v1/default/banks/main-memory/operations");
+        expect(get?.url).toContain("type=retain");
+        expect(get?.url).toContain("status=failed");
+    });
+
+    test("fetchFailedRetainCount returns null when envelope has no total (no operations.length fallback)", async () => {
+        // A paginated `limit=N` slice can be smaller than the true total, so
+        // using `operations.length` as a fallback would understate the count
+        // and silently mask real backend failures. The hook is strict: only
+        // an explicit `total: number` is treated as a valid count.
+        responder = () =>
+            okJson({
+                operations: [
+                    { id: "op1", status: "failed", task_type: "retain" },
+                    { id: "op2", status: "failed", task_type: "retain" },
+                ],
+            });
+        const backend = makeBackend();
+        expect(await backend.fetchFailedRetainCount()).toBeNull();
+    });
+
+    test("fetchFailedRetainCount returns null when envelope is malformed", async () => {
+        responder = () => okJson({ not: "the right shape" });
+        const backend = makeBackend();
+        expect(await backend.fetchFailedRetainCount()).toBeNull();
+    });
 });
 
 describe("HindsightMemoryBackend mental models", () => {

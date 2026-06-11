@@ -3,7 +3,10 @@
  * and returns typed responses for TUI consumption.
  */
 import type { MagicContextConfig } from "../config/schema/magic-context";
-import { getExternalMemoryStatus } from "../features/magic-context/memory/external-memory";
+import {
+    fetchExternalFailedRetains,
+    getExternalMemoryStatus,
+} from "../features/magic-context/memory/external-memory";
 import { readExternalRecallSnapshot } from "../features/magic-context/memory/external-recall-read";
 import { resolveProjectIdentity } from "../features/magic-context/memory/project-identity";
 import {
@@ -494,7 +497,7 @@ export function buildSidebarSnapshot(
     }
 }
 
-export function buildStatusDetail(
+export async function buildStatusDetail(
     db: Database,
     sessionId: string,
     directory: string,
@@ -502,7 +505,7 @@ export function buildStatusDetail(
     config?: Record<string, unknown>,
     liveSessionState?: LiveSessionState,
     injectionBudgetTokens?: number,
-): StatusDetail {
+): Promise<StatusDetail> {
     const base = buildSidebarSnapshot(
         db,
         sessionId,
@@ -543,9 +546,16 @@ export function buildStatusDetail(
     const externalStatus = getExternalMemoryStatus();
     if (externalStatus) {
         const { state: recallState } = readExternalRecallSnapshot(db, sessionId);
+        // fetchExternalFailedRetains goes through HindsightMemoryBackend's
+        // request() — inherits the 10s fetch timeout and circuit breaker, so
+        // a hung backend can't drag the dialog past that cap. Returns null
+        // on any failure path (offline / endpoint missing / malformed
+        // envelope), so the field is always safe to surface.
+        const failedRetainCount = await fetchExternalFailedRetains();
         detail.externalMemory = {
             ...externalStatus,
             recallState,
+            failedRetainCount,
         };
     }
 
