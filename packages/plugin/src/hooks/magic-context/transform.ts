@@ -204,6 +204,10 @@ export interface TransformDeps {
          *  still write memories explicitly via `ctx_memory write`. Issue #44. */
         autoPromote: boolean;
     };
+    /** Embedding provider on/off (config `embedding.provider !== "off"`).
+     *  Gates compartment P1 embedding + project registration at the runner
+     *  call sites — independent of the memory store flags. */
+    embeddingEnabled?: boolean;
     ensureProjectRegistered?: (directory: string, db: ContextDatabase) => Promise<void>;
     /**
      * Returns the historian chunk budget. Called at each historian spawn site
@@ -676,6 +680,7 @@ export function createTransform(deps: TransformDeps) {
                 // who disable the feature actually see no memories created.
                 memoryEnabled: deps.memoryConfig?.enabled,
                 autoPromote: deps.memoryConfig?.autoPromote,
+                embeddingEnabled: deps.embeddingEnabled,
                 ensureProjectRegistered: deps.ensureProjectRegistered,
                 // Historian publication invalidates the injection cache AND
                 // changes compartments/facts that render into message[0]. We
@@ -1182,6 +1187,7 @@ export function createTransform(deps: TransformDeps) {
             // memory.auto_promote.
             memoryEnabled: deps.memoryConfig?.enabled,
             autoPromote: deps.memoryConfig?.autoPromote,
+            embeddingEnabled: deps.embeddingEnabled,
             ensureProjectRegistered: deps.ensureProjectRegistered,
             // See startRecoveryRun above for the full rationale —
             // historian/recomp publication signals history rebuild +

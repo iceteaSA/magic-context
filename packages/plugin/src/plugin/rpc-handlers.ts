@@ -772,6 +772,7 @@ export function registerRpcHandlers(
             historianTimeoutMs: config.historian_timeout_ms ?? DEFAULT_HISTORIAN_TIMEOUT_MS,
             memoryEnabled: config.memory?.enabled ?? true,
             autoPromote: config.memory?.auto_promote ?? true,
+            embeddingEnabled: config.embedding?.provider !== "off",
             fallbackModels: resolveFallbackChain(
                 HISTORIAN_AGENT,
                 config.historian?.fallback_models,

@@ -345,9 +345,10 @@ export async function executePartialRecompInternal(
             // (the rebuilt range), so their embeddings must be regenerated or the
             // rebuilt rows have NULL p1_embedding and vanish from ctx_search +
             // dreamer cross-linking. Embedding is the search substrate (gated on
-            // memory-enabled), distinct from fact promotion (which recomp skips).
-            // Mirrors the full-recomp success path. Fire-and-forget, best-effort.
-            if (deps.memoryEnabled !== false) {
+            // the embedding provider), distinct from fact promotion (which recomp
+            // skips). Mirrors the full-recomp success path. Fire-and-forget,
+            // best-effort.
+            if (deps.embeddingEnabled !== false) {
                 const projectIdentity = resolveProjectIdentity(sessionDirectory);
                 const liveCompartments = getCompartments(db, sessionId);
                 const toEmbed = liveCompartments
