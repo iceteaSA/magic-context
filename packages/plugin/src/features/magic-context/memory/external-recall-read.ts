@@ -52,14 +52,34 @@ export function readExternalRecallSnapshot(
         return {
             state,
             snapshot: {
-                project: Array.isArray(parsed.project) ? parsed.project : [],
-                profile: Array.isArray(parsed.profile) ? parsed.profile : [],
-                global: Array.isArray(parsed.global) ? parsed.global : [],
+                project: sanitizeSlice(parsed.project),
+                profile: sanitizeSlice(parsed.profile),
+                global: sanitizeSlice(parsed.global),
             },
         };
     } catch {
         return { state, snapshot: null };
     }
+}
+
+/** Per-item validation: the JSON is self-written, but a corrupted row must
+ *  degrade to "fewer items", never to a render-path throw (a non-string
+ *  content would explode inside materializeM0's renderExternalLines). */
+function sanitizeSlice(value: unknown): ExternalRecallSliceItem[] {
+    if (!Array.isArray(value)) return [];
+    const items: ExternalRecallSliceItem[] = [];
+    for (const raw of value) {
+        if (!raw || typeof raw !== "object") continue;
+        const item = raw as { content?: unknown; category?: unknown };
+        if (typeof item.content !== "string" || item.content.length === 0) continue;
+        items.push({
+            content: item.content,
+            ...(typeof item.category === "string" && item.category.length > 0
+                ? { category: item.category }
+                : {}),
+        });
+    }
+    return items;
 }
 
 /** Marker-capture helper: hash of the persisted DONE snapshot, '' otherwise. */

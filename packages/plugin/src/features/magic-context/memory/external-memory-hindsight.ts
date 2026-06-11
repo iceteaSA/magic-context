@@ -352,13 +352,17 @@ export class HindsightMemoryBackend implements ExternalMemoryBackend {
     async fetchFailedRetainCount(signal?: AbortSignal): Promise<number | null> {
         try {
             if (!(await this.initialize())) return null;
+            // benign404: a missing operations route (older Hindsight build)
+            // must not feed the circuit breaker — this is a pure status check
+            // and opening the circuit here would suppress real retains.
             const response = await this.request(
                 "GET",
                 `/v1/default/banks/${encodeURIComponent(this.mainBank)}/operations?type=retain&status=failed&exclude_parents=true&limit=5`,
                 undefined,
                 signal,
+                { benign404: true },
             );
-            if (!response) return null;
+            if (!response || response.status === 404) return null;
             const body = (await response.json().catch(() => null)) as {
                 total?: unknown;
             } | null;

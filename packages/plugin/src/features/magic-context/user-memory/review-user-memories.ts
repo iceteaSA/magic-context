@@ -238,13 +238,19 @@ If no promotions are warranted, return empty arrays. Always consume reviewed can
                 candidateIds: p.candidate_ids ?? [],
             }))
             .filter((p) => p.content.length > 0);
+        // Coerce LLM-provided ids to integers: a stringified id ("5") would
+        // pass a truthiness check but miss both the number-keyed snapshot Map
+        // (silently skipping the external corrective remove — resurrecting
+        // dismissed memories next session) and any strict-typed DB binding.
         const updates = (parsed.update_existing ?? [])
             .map((u) => ({
-                memoryId: u.memory_id,
+                memoryId: Number(u.memory_id),
                 content: u.content?.trim() ?? "",
             }))
-            .filter((u) => Boolean(u.memoryId) && u.content.length > 0);
-        const dismissals = (parsed.dismiss_existing ?? []).filter((d) => Boolean(d.memory_id));
+            .filter((u) => Number.isInteger(u.memoryId) && u.memoryId > 0 && u.content.length > 0);
+        const dismissals = (parsed.dismiss_existing ?? [])
+            .map((d) => ({ ...d, memory_id: Number(d.memory_id) }))
+            .filter((d) => Number.isInteger(d.memory_id) && d.memory_id > 0);
         const consumeCandidateIds = parsed.consume_candidate_ids ?? [];
 
         // Snapshot of pre-mutation content for every stable memory touched by

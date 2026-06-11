@@ -37,6 +37,8 @@
  * see Pi runs in the same `[magic-context][ses_xxx]` format.
  */
 
+import { basename } from "node:path";
+
 import { embedAndStoreCompartments } from "@magic-context/core/features/magic-context/compartment-embedding";
 import { insertCompartmentEvents } from "@magic-context/core/features/magic-context/compartment-events";
 import { isCompartmentLeaseHeld } from "@magic-context/core/features/magic-context/compartment-lease";
@@ -807,11 +809,17 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 				await ensureProjectRegisteredFromPiDirectory(directory, db);
 			}
 			if (promotionActive && !discardedLast) {
+				// projectName mirrors the OpenCode call site: the human-readable
+				// bank-template label for the external-memory tee. Without it a
+				// future Pi-side external config would resolve the fallback bank
+				// ("mc-project-<id8>") and silently split the project's external
+				// bank across harnesses.
 				promoteSessionFactsToMemory(
 					db,
 					sessionId,
 					projectPath,
 					validatedPass.facts ?? [],
+					{ projectName: basename(directory) },
 				);
 			}
 

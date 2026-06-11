@@ -277,7 +277,12 @@ function trimSlice(slice: ExternalRecallSliceItem[], maxTokens: number): Externa
     const result: ExternalRecallSliceItem[] = [];
     let used = 0;
     for (const item of slice) {
-        const tokens = estimateTokens(`- ${item.content}`) + 1;
+        // Price the item the way the injection renders it: single-line items
+        // as "- content" (+newline), multi-line documents (mental models)
+        // verbatim with blank-line separators on both sides.
+        const multiLine = item.content.includes("\n");
+        const rendered = multiLine ? item.content : `- ${item.content}`;
+        const tokens = estimateTokens(rendered) + (multiLine ? 2 : 1);
         if (used + tokens > maxTokens) continue;
         result.push(item);
         used += tokens;
