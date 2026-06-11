@@ -592,6 +592,13 @@ describe("external search source", () => {
 
         const results = await unifiedSearch(db, sessionId, projectPath, "query", {
             explicitSearch: true,
+            // Stub the embedding seam like every other test in this file —
+            // without it the memory source falls back to the module-level
+            // embedder and pays a multi-second local-model load that has
+            // nothing to do with what these tests assert (and flirts with
+            // bun's 5s per-test timeout under load).
+            embedQuery: async () => null,
+            isEmbeddingRuntimeEnabled: () => false,
         });
         const external = results.filter((r) => r.source === "external");
         expect(external.length).toBeGreaterThan(0);
@@ -616,6 +623,8 @@ describe("external search source", () => {
 
         await unifiedSearch(db, sessionId, projectPath, "query", {
             explicitSearch: false,
+            embedQuery: async () => null,
+            isEmbeddingRuntimeEnabled: () => false,
         });
         expect(called).toBe(0);
     });
@@ -641,6 +650,8 @@ describe("external search source", () => {
 
         await unifiedSearch(db, sessionId, projectPath, "query", {
             explicitSearch: true,
+            embedQuery: async () => null,
+            isEmbeddingRuntimeEnabled: () => false,
         });
         expect(called).toBe(0);
     });
@@ -669,6 +680,8 @@ describe("external search source", () => {
 
         const results = await unifiedSearch(db, sessionId, projectPath, "query", {
             explicitSearch: true,
+            embedQuery: async () => null,
+            isEmbeddingRuntimeEnabled: () => false,
         });
         const contents = results.filter((r) => r.source === "external").map((r) => r.content);
         expect(contents).not.toContain("already injected");
