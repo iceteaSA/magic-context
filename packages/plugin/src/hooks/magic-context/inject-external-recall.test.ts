@@ -18,6 +18,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+    appendCompartments,
+    type CompartmentInput,
+} from "../../features/magic-context/compartment-storage";
 import { insertMemory } from "../../features/magic-context/memory/storage-memory";
 import { runMigrations } from "../../features/magic-context/migrations";
 import { getOrCreateSessionMeta } from "../../features/magic-context/storage";
@@ -25,6 +29,7 @@ import { initializeDatabase } from "../../features/magic-context/storage-db";
 import { Database } from "../../shared/sqlite";
 import {
     clearInjectionCache,
+    injectM0M1,
     type M0HardSignals,
     type M0M1RenderOptions,
     type M0M1State,
@@ -55,6 +60,19 @@ function makeProjectDir(): string {
     const dir = mkdtempSync(join(tmpdir(), "mc-ext-recall-test-"));
     tempDirs.push(dir);
     return dir;
+}
+
+function compartment(seq: number, title: string, body: string): CompartmentInput {
+    return {
+        sequence: seq,
+        startMessage: seq,
+        endMessage: seq,
+        startMessageId: `m${seq}`,
+        endMessageId: `m${seq}`,
+        title,
+        content: body,
+        p1: body,
+    };
 }
 
 const BASE_HARD: M0HardSignals = {
@@ -146,7 +164,7 @@ describe("external recall in m[0]/m[1]", () => {
         expect(result.snapshotMarkers.externalRecallHash).toBe("");
     });
 
-    test("late arrival: snapshot lands after materialize → m[1] delta, no m[0] rematerialize", () => {
+    test("late arrival: snapshot lands after materialize → m[1] delta, no m[0] rematerialize, m[0] bytes stable", () => {
         db = makeDb();
         const projectDirectory = makeProjectDir();
         // First materialize with no snapshot.
@@ -156,6 +174,7 @@ describe("external recall in m[0]/m[1]", () => {
         });
         expect(first.m0Text).not.toContain("<external-memory");
         expect(first.snapshotMarkers.externalRecallHash).toBe("");
+        const baselineM0Bytes = first.m0Bytes;
 
         // Snapshot lands AFTER m[0] is materialized. The fact that recall is
         // now "done" must NOT bust m[0] (mustMaterialize stays false).
@@ -182,6 +201,112 @@ describe("external recall in m[0]/m[1]", () => {
         const m1 = renderM1(buildOptions(), first.snapshotMarkers, first.renderedMemoryIds);
         expect(m1).toContain("<external-memory");
         expect(m1).toContain("- late fact");
+
+        // Byte-stability: the cached m[0] baseline is unchanged after the late
+        // snapshot lands. The Anthropic prompt-cache prefix MUST stay intact.
+        const row = db
+            .prepare("SELECT cached_m0_bytes FROM session_meta WHERE session_id = ?")
+            .get(SESSION_ID) as { cached_m0_bytes: Buffer | Uint8Array | null } | null;
+        const persisted = row?.cached_m0_bytes ? Buffer.from(row.cached_m0_bytes) : null;
+        expect(persisted?.equals(baselineM0Bytes)).toBe(true);
+    });
+
+    test("BLOCKING: a LARGE late recall delta does NOT trigger a pressure refold (recall is not a bust trigger)", () => {
+        // Regression for the BLOCKING finding: the m[1] drift triggers (ratio
+        // and absolute cap) were computed from the full m1Text — a large
+        // late-arrival recall delta could therefore CAUSE a pressure refold
+        // that would not otherwise fire. Spec invariant: late recall must
+        // NEVER cause a fold. We exclude the external delta from the pressure
+        // math, so the backstop only fires for GENUINE non-recall drift.
+        db = makeDb();
+        const projectDirectory = makeProjectDir();
+        // Tiny baseline m[0] + small history budget so the absolute cap is
+        // easy to exceed if measured against the full m1Text. Mirror the
+        // m0m1-taxonomy.test.ts "pressure backstop" fixture for headroom.
+        appendCompartments(db, SESSION_ID, [compartment(0, "A", "Ax")]);
+        const first = injectM0M1({
+            ...buildOptions(),
+            projectDirectory,
+            historyBudgetTokens: 60,
+        });
+        expect(first.decision.reason).toBe("first_render");
+        const baselineM0Bytes = first.m0Bytes;
+
+        // Seed a LARGE late recall snapshot — 30 project items of ~200 chars.
+        // 30 * 200 = ~6000 chars / ~1500 tokens, which dwarfs the 60-token
+        // history budget × 0.2 absolute cap (12 tokens). With the bug, this
+        // would trip the absolute cap and force a refold.
+        const big = "x".repeat(200);
+        const bigRecall = {
+            project: Array.from({ length: 30 }, (_, i) => ({
+                content: `${big} ${i}`,
+            })),
+            profile: [],
+            global: [],
+        };
+        seedRecallSnapshot(db, SESSION_ID, bigRecall);
+
+        // Cache-busting pass with no HARD signal — the only trigger that
+        // COULD refold is the pressure backstop. mustMaterialize returns
+        // false (recall is not a HARD trigger).
+        const state = getOrCreateSessionMeta(db, SESSION_ID) as unknown as M0M1State;
+        const result = injectM0M1({
+            ...buildOptions(),
+            state,
+            projectDirectory,
+            historyBudgetTokens: 60,
+            isCacheBustingPass: true,
+            hardSignals: BASE_HARD,
+        });
+
+        // No refold: m[0] bytes are byte-identical to the pre-recall baseline.
+        expect(result.m0RematerializedThisPass).toBe(false);
+        const row = db
+            .prepare("SELECT cached_m0_bytes FROM session_meta WHERE session_id = ?")
+            .get(SESSION_ID) as { cached_m0_bytes: Buffer | Uint8Array | null } | null;
+        const persisted = row?.cached_m0_bytes ? Buffer.from(row.cached_m0_bytes) : null;
+        expect(persisted?.equals(baselineM0Bytes)).toBe(true);
+        // m[1] still carries the late delta (the model sees it this pass).
+        expect(result.m1Text).toContain("<external-memory");
+        expect(result.m1Text).toContain("xxx"); // the big token
+    });
+
+    test("inverse: with the SAME setup, GENUINE non-external m[1] drift DOES trigger the pressure backstop", () => {
+        // Proves the BLOCKING fix did not disable the backstop for genuine
+        // drift. Same shape as the m0m1-taxonomy.test.ts "pressure backstop"
+        // test, exercised here to keep the two adjacent so a future refactor
+        // of the recall exclusion doesn't accidentally widen it.
+        db = makeDb();
+        const projectDirectory = makeProjectDir();
+        appendCompartments(db, SESSION_ID, [compartment(0, "A", "Ax")]);
+        const first = injectM0M1({
+            ...buildOptions(),
+            projectDirectory,
+            historyBudgetTokens: 60,
+        });
+        expect(first.decision.reason).toBe("first_render");
+
+        // Append several compartments → m[1] grows past 20% of the 60-token
+        // history budget via genuine non-external drift (new compartments).
+        appendCompartments(db, SESSION_ID, [
+            compartment(1, "B", "Bravo delta with enough words to consume tokens"),
+            compartment(2, "C", "Charlie delta with more words again to consume more tokens"),
+            compartment(3, "D", "Delta delta even more words here for tokens and tokens"),
+        ]);
+        const state = getOrCreateSessionMeta(db, SESSION_ID) as unknown as M0M1State;
+        const folded = injectM0M1({
+            ...buildOptions(),
+            state,
+            projectDirectory,
+            historyBudgetTokens: 60,
+            isCacheBustingPass: true,
+            hardSignals: BASE_HARD,
+        });
+        // The absolute-cap backstop folded m[1] into m[0] this pass.
+        expect(folded.m0RematerializedThisPass).toBe(true);
+        expect(folded.m1Text).toBe(
+            "<session-history-since>(no new content since last materialization)</session-history-since>",
+        );
     });
 
     test("HARD fold reconciles: after re-materialize, delta disappears", () => {

@@ -801,6 +801,12 @@ export function createTransform(deps: TransformDeps) {
         // off) — identity computed from the directory directly. Internally
         // gated on provider/recall.enabled/already-settled; fire-and-forget.
         if (fullFeatureMode && compartmentDirectory) {
+            // Kick project registration so the dedup embedding provider is
+            // likely registered by recall-settle time; hash-only fallback
+            // covers the race (spec-accepted).
+            if (deps.ensureProjectRegistered) {
+                void deps.ensureProjectRegistered(compartmentDirectory, db).catch(() => {});
+            }
             startSessionRecall({
                 db,
                 sessionId,

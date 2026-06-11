@@ -45,7 +45,7 @@ export function startSessionRecall(args: {
 }): void {
     try {
         const config = getExternalRecallConfig();
-        if (!config || !config.enabled) return;
+        if (!config?.enabled) return;
         if (inFlight.has(args.sessionId)) return;
         const { state } = readExternalRecallSnapshot(args.db, args.sessionId);
         // done/failed → settled for this session. pending WITH no in-flight
@@ -67,7 +67,19 @@ export function startSessionRecall(args: {
 export async function waitForSessionRecall(sessionId: string, timeoutMs: number): Promise<void> {
     const promise = inFlight.get(sessionId);
     if (!promise) return;
-    await Promise.race([promise, new Promise((r) => setTimeout(r, timeoutMs))]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        await Promise.race([
+            promise,
+            new Promise<void>((r) => {
+                timer = setTimeout(r, timeoutMs);
+            }),
+        ]);
+    } finally {
+        // Clear the timer on the fast-resolve path so the node timer queue does
+        // not hold the callback (and any closure) past the function return.
+        if (timer !== undefined) clearTimeout(timer);
+    }
 }
 
 /**
@@ -81,7 +93,7 @@ export async function maybeAwaitExternalRecall(args: {
     hasCachedM0: boolean;
 }): Promise<void> {
     const config = getExternalRecallConfig();
-    if (!config || !config.enabled) return;
+    if (!config?.enabled) return;
     if (args.hasCachedM0) return;
     if (!inFlight.has(args.sessionId)) return;
     await waitForSessionRecall(args.sessionId, config.timeout_ms);

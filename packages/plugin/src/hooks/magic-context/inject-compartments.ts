@@ -1591,6 +1591,11 @@ function renderMemoryUpdatesBlock(args: {
 interface RenderM1Result {
     text: string;
     memoryUpdateCount: number;
+    /** The <external-memory> delta block (late-arrival snapshot) when present,
+     *  "" otherwise. Excluded from the injectM0M1 pressure-refold token math
+     *  so a large recall can NEVER cause an m[0] refold (spec: recall is not
+     *  a bust trigger). */
+    externalDeltaText: string;
 }
 
 function renderM1WithMetadata(
@@ -1669,12 +1674,18 @@ function renderM1WithMetadata(
     // intentionally compare the live snapshot hash to markers.externalRecallHash
     // (not the DB column) so a sibling that materialized between passes and
     // updated the column does NOT leak a stale delta in this soft-refresh.
+    // Captured separately (not in `blocks`) so injectM0M1 can subtract its
+    // tokens from the pressure-refold math — recall is NOT a bust trigger.
+    let externalDeltaText = "";
     const recallRead = readExternalRecallSnapshot(options.db, options.sessionId);
     if (recallRead.state === "done" && recallRead.snapshot) {
         const currentRecallHash = computeRecallSnapshotHash(recallRead.snapshot);
         if (currentRecallHash !== "" && currentRecallHash !== markers.externalRecallHash) {
             const delta = renderExternalMemoryDelta(recallRead.snapshot);
-            if (delta) blocks.push(delta);
+            if (delta) {
+                externalDeltaText = delta;
+                blocks.push(delta);
+            }
         }
     }
 
@@ -1683,11 +1694,16 @@ function renderM1WithMetadata(
     // above (maxMemoryId watermark), not via a <session_facts> delta here.
 
     if (blocks.length === 0) {
-        return { text: M1_EMPTY_PLACEHOLDER, memoryUpdateCount: memoryUpdates.count };
+        return {
+            text: M1_EMPTY_PLACEHOLDER,
+            memoryUpdateCount: memoryUpdates.count,
+            externalDeltaText: "",
+        };
     }
     return {
         text: `<session-history-since>\n${blocks.join("\n")}\n</session-history-since>`,
         memoryUpdateCount: memoryUpdates.count,
+        externalDeltaText,
     };
 }
 
@@ -1870,7 +1886,13 @@ function softRefreshCachedM1(options: M0M1RenderOptions): RenderM1Result {
             const sibling = readCachedM0M1Row(options.db, options.sessionId);
             if (!sibling) throw new RenderM1InvalidMarkersError(options.sessionId);
             applyCachedRowToState(options.state, sibling);
-            return { text: replayCachedM1(options.state), memoryUpdateCount: 0 };
+            // Replayed bytes never reach the refold math (m1Recomputed is false
+            // on the contention fallback path), so externalDeltaText="" is safe.
+            return {
+                text: replayCachedM1(options.state),
+                memoryUpdateCount: 0,
+                externalDeltaText: "",
+            };
         }
 
         const markers = markersFromCachedRow(row);
@@ -2049,7 +2071,17 @@ export function injectM0M1(options: M0M1RenderOptions): InjectM0M1Result {
                 materialized.snapshotMarkers,
                 materialized.m1Bytes,
             );
-            m1Render = { text: materialized.m1Text, memoryUpdateCount: 0 };
+            // The fresh-materialize path's m1Render will not drive a pressure
+            // refold (rematerialized=true skips the refold block), so the
+            // externalDeltaText field is logically inert here. Thread it for
+            // shape consistency; the materialize-with-snapshot case would
+            // produce externalDeltaText="" anyway (markers.externalRecallHash
+            // was just stamped to the current hash).
+            m1Render = {
+                text: materialized.m1Text,
+                memoryUpdateCount: 0,
+                externalDeltaText: "",
+            };
             rematerialized = true;
         } catch (error) {
             if (!(error instanceof MaterializeContentionError)) throw error;
@@ -2102,10 +2134,16 @@ export function injectM0M1(options: M0M1RenderOptions): InjectM0M1Result {
     let m1Text: string;
     let memoryUpdateCount = 0;
     let m1Recomputed = m1Render !== null;
+    // Tracked across whichever RenderM1Result produced the live m[1] text, so
+    // the pressure-refold token math can subtract the late-recall delta.
+    // Replay paths (m1Recomputed=false) skip the refold entirely, so "" is
+    // safe for those branches.
+    let externalDeltaText = "";
 
     if (m1Render) {
         m1Text = m1Render.text;
         memoryUpdateCount = m1Render.memoryUpdateCount;
+        externalDeltaText = m1Render.externalDeltaText;
     } else if (contentionExhausted && freshFallbackRenderedMemoryIds) {
         const freshM1 = renderM1WithMetadata(
             { ...options, preRenderedKeyFilesBlock: preRenderKeyFilesBlock(options) },
@@ -2114,6 +2152,7 @@ export function injectM0M1(options: M0M1RenderOptions): InjectM0M1Result {
         );
         m1Text = freshM1.text;
         memoryUpdateCount = freshM1.memoryUpdateCount;
+        externalDeltaText = freshM1.externalDeltaText;
         m1Recomputed = true;
     } else if (contentionExhausted) {
         m1Text = replayCachedM1(options.state);
@@ -2121,6 +2160,7 @@ export function injectM0M1(options: M0M1RenderOptions): InjectM0M1Result {
         const refreshed = softRefreshCachedM1(options);
         m1Text = refreshed.text;
         memoryUpdateCount = refreshed.memoryUpdateCount;
+        externalDeltaText = refreshed.externalDeltaText;
         m1Recomputed = true;
         m0Text = decodeM0Bytes(options.state.cachedM0Bytes) ?? M0_EMPTY_BODY;
     } else {
@@ -2154,10 +2194,26 @@ export function injectM0M1(options: M0M1RenderOptions): InjectM0M1Result {
     // ~15% of m[0] tokens". XML-heavy / non-Latin content makes char length
     // diverge sharply from token count, so the ratio must compare tokens on both
     // sides. Computed once; this branch is rare (cache-busting + m1Recomputed).
+    //
+    // External recall content must NEVER CAUSE a fold (spec: not a bust trigger);
+    // it rides along when a fold fires for other reasons. Two layers of
+    // subtraction from m1Tokens: the delta itself (late recall) AND a small
+    // wrapper overhead (every m[1] carries the wrapper, empty or not — not a
+    // drift signal). The wrapper tokens are also subtracted from the absolute
+    // cap budget for symmetry, so a tiny m[0] baseline (where the wrapper
+    // alone would exceed the cap) does not falsely fire a refold when the
+    // only m[1] content is the recall delta.
     const m1HasContent = m1Text !== M1_EMPTY_PLACEHOLDER;
     const m1Tokens = m1HasContent ? estimateTokens(m1Text) : 0;
+    const M1_PRESSURE_WRAPPER_TOKENS = 20;
+    const externalDeltaTokens = externalDeltaText ? estimateTokens(externalDeltaText) : 0;
+    const m1PressureTokens = Math.max(
+        0,
+        m1Tokens - externalDeltaTokens - M1_PRESSURE_WRAPPER_TOKENS,
+    );
+    const m1AbsoluteContentBudget = Math.max(0, m1AbsoluteBudget - M1_PRESSURE_WRAPPER_TOKENS);
     const m0Tokens = estimateTokens(m0Text);
-    const m1OverAbsoluteCap = m1HasContent && m1Tokens > m1AbsoluteBudget;
+    const m1OverAbsoluteCap = m1HasContent && m1PressureTokens > m1AbsoluteContentBudget;
     if (
         !rematerialized &&
         !contentionExhausted &&
@@ -2167,7 +2223,7 @@ export function injectM0M1(options: M0M1RenderOptions): InjectM0M1Result {
             m1OverAbsoluteCap ||
             (m1HasContent &&
                 m0Tokens >= M0_DRIFT_RATIO_FLOOR_TOKENS &&
-                m1Tokens > m0Tokens * M1_DRIFT_RATIO))
+                m1PressureTokens > m0Tokens * M1_DRIFT_RATIO))
     ) {
         try {
             const refolded = materializeWithRetry(options);
