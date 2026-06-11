@@ -200,7 +200,9 @@ describe("HindsightMemoryBackend recall/remove", () => {
     test("project recall hits project bank with types and no tags", async () => {
         responder = () =>
             okJson({
-                results: [{ id: "1", text: "fact A", type: "world", tags: ["category:ARCHITECTURE"] }],
+                results: [
+                    { id: "1", text: "fact A", type: "world", tags: ["category:ARCHITECTURE"] },
+                ],
             });
         const backend = makeBackend();
         const results = await backend.recall({
@@ -212,16 +214,16 @@ describe("HindsightMemoryBackend recall/remove", () => {
         });
         const post = requests.find((r) => r.init.method === "POST");
         if (!post) throw new Error("no recall POST");
-        expect(post.url).toContain(
-            "/v1/default/banks/mc-magic-context-abcdef12/memories/recall",
-        );
+        expect(post.url).toContain("/v1/default/banks/mc-magic-context-abcdef12/memories/recall");
         const body = JSON.parse(String(post.init.body));
         expect(body.query).toBe("project rules");
         expect(body.types).toEqual(["world", "observation"]);
         expect(body.budget).toBe("mid");
         expect(body.max_tokens).toBe(1024);
         expect(body.tags).toBeUndefined();
-        expect(results).toEqual([{ content: "fact A", score: undefined, category: "ARCHITECTURE" }]);
+        expect(results).toEqual([
+            { content: "fact A", score: undefined, category: "ARCHITECTURE" },
+        ]);
     });
 
     test("user recall hits main bank with scope:user any_strict", async () => {

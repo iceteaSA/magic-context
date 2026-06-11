@@ -247,7 +247,9 @@ export const ExternalRecallConfigSchema = z
             .min(256)
             .max(8192)
             .default(2048)
-            .describe("Token budget per recall slice (project / profile / global each). (default: 2048)"),
+            .describe(
+                "Token budget per recall slice (project / profile / global each). (default: 2048)",
+            ),
         dedup_threshold: z
             .number()
             .min(0.5)
@@ -265,7 +267,9 @@ export const ExternalRecallConfigSchema = z
         search: z
             .boolean()
             .default(true)
-            .describe("Expose the ctx_search 'external' source (project + main bank). (default: true)"),
+            .describe(
+                "Expose the ctx_search 'external' source (project + main bank). (default: true)",
+            ),
         mental_models: z
             .boolean()
             .default(true)
