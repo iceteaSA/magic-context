@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import { detectConfigFile, isPrototypePollutionKey, parseJsonc } from "../shared/jsonc-parser";
 import { setOutputReserveConfig } from "../shared/models-dev-cache";
@@ -52,6 +53,26 @@ function getUserConfigBasePath(): string {
 
 function getProjectConfigBasePath(directory: string): string {
     return cortexKitProjectConfigBasePath(directory);
+}
+
+/**
+ * When the project config resolves to the SAME file as the user config (opencode
+ * opened ON the user config dir, e.g. ~/.config/opencode as project root), drop
+ * the project view so the user's own file is not loaded a second time as
+ * untrusted repo config — which would strip {file:} tokens and memory.external,
+ * silently disabling the external memory backend.
+ */
+function dropProjectConfigWhenSameAsUser(
+    userDetected: ReturnType<typeof detectConfigFile>,
+    projectDetected: ReturnType<typeof detectConfigFile>,
+): ReturnType<typeof detectConfigFile> {
+    if (userDetected.format === "none" || projectDetected.format === "none") {
+        return projectDetected;
+    }
+    if (resolve(userDetected.path) === resolve(projectDetected.path)) {
+        return { format: "none", path: projectDetected.path };
+    }
+    return projectDetected;
 }
 
 interface LegacyReadFallback {
@@ -486,7 +507,14 @@ function combinedOutcome(args: {
 
 export function loadPluginConfigDetailed(directory: string): LoadResultDetailed {
     const userDetected = detectConfigFile(getUserConfigBasePath());
-    const projectDetected = detectConfigFile(getProjectConfigBasePath(directory));
+    // When opencode is opened ON the user config dir itself, project discovery
+    // resolves to the SAME magic-context.jsonc as the user config. Drop the
+    // project view in that case so the user's own file is not re-loaded as
+    // untrusted repo config (which would strip {file:} tokens + memory.external).
+    const projectDetected = dropProjectConfigWhenSameAsUser(
+        userDetected,
+        detectConfigFile(getProjectConfigBasePath(directory)),
+    );
     // Both-harness sources drive the GC-suppression signal; this-harness sources
     // (OpenCode) drive the non-destructive read fallback when the base is absent.
     const legacySources = resolveLegacyConfigSources(directory);
@@ -500,10 +528,22 @@ export function loadPluginConfigDetailed(directory: string): LoadResultDetailed 
         userDetected.format === "none"
             ? resolveLegacyReadFallback(harnessLegacy.user)
             : { source: null };
-    const projectLegacyFallback =
+    let projectLegacyFallback =
         projectDetected.format === "none"
             ? resolveLegacyReadFallback(harnessLegacy.project)
             : { source: null };
+    // Same-file guard at the legacy-fallback layer: when opencode is opened ON a
+    // legacy user config dir (e.g. ~/.config/opencode), the project legacy source
+    // resolves to the SAME file as the user legacy source. Drop the project view
+    // so the user's own legacy config is not re-read as untrusted repo config
+    // (which would strip {file:} tokens + memory.external).
+    if (
+        userLegacyFallback.source &&
+        projectLegacyFallback.source &&
+        resolve(userLegacyFallback.source.path) === resolve(projectLegacyFallback.source.path)
+    ) {
+        projectLegacyFallback = { source: null };
+    }
 
     // "Unmigrated" (→ untrusted, GC suppressed) ONLY when the base is absent,
     // some legacy config exists, AND we did NOT read this harness's own legacy.
