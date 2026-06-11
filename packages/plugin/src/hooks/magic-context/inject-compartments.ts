@@ -35,6 +35,7 @@ import {
     getActiveUserMemories,
     type UserMemory,
 } from "../../features/magic-context/user-memory/storage-user-memory";
+import { readExternalRecallHash } from "../../features/magic-context/memory/external-recall-read";
 import { BoundedSessionMap } from "../../shared/bounded-session-map";
 import { sessionLog } from "../../shared/logger";
 import type { Database, Statement as PreparedStatement } from "../../shared/sqlite";
@@ -585,6 +586,10 @@ export interface M0SnapshotMarkers {
     systemHash: string;
     toolSetHash: string;
     modelKey: string;
+    /** Hash of the persisted external-recall snapshot baked into m[0] ('' = none).
+     *  NOT a HARD bust trigger (external recall is not a materialization driver) —
+     *  drives the m[1] <external-memory> delta comparison only. */
+    externalRecallHash: string;
 }
 
 /**
@@ -629,6 +634,7 @@ export interface M0M1State {
     cachedM0SystemHash: string | null;
     cachedM0ToolSetHash: string | null;
     cachedM0ModelKey: string | null;
+    cachedM0ExternalRecallHash: string | null;
     snapshotMarkers?: M0SnapshotMarkers | null;
 }
 
@@ -824,6 +830,7 @@ export function readCurrentM0SnapshotMarkers(args: {
         systemHash: hard.systemHash,
         toolSetHash: hard.toolSetHash,
         modelKey: hard.modelKey,
+        externalRecallHash: readExternalRecallHash(args.db, args.sessionId),
     };
 }
 
@@ -850,6 +857,7 @@ function snapshotMarkersFromCachedM0(state: M0M1State): M0SnapshotMarkers | null
         systemHash: state.cachedM0SystemHash ?? "",
         toolSetHash: state.cachedM0ToolSetHash ?? "",
         modelKey: state.cachedM0ModelKey ?? "",
+        externalRecallHash: state.cachedM0ExternalRecallHash ?? "",
     };
 }
 
@@ -1228,6 +1236,7 @@ function applyMarkersToState(
     state.cachedM0SystemHash = markers.systemHash;
     state.cachedM0ToolSetHash = markers.toolSetHash;
     state.cachedM0ModelKey = markers.modelKey;
+    state.cachedM0ExternalRecallHash = markers.externalRecallHash;
     state.snapshotMarkers = markers;
 }
 
@@ -1357,6 +1366,7 @@ export function materializeM0(options: M0M1RenderOptions): MaterializeM0Result {
             systemHash: snapshotMarkers.systemHash,
             toolSetHash: snapshotMarkers.toolSetHash,
             modelKey: snapshotMarkers.modelKey,
+            externalRecallHash: snapshotMarkers.externalRecallHash,
         };
         // NOTE: maxMemoryId is deliberately EXCLUDED from this stale-check.
         // Additive memory writes (write/promote) do not invalidate the rendered
@@ -1401,6 +1411,7 @@ export function materializeM0(options: M0M1RenderOptions): MaterializeM0Result {
             systemHash: snapshotMarkers.systemHash,
             toolSetHash: snapshotMarkers.toolSetHash,
             modelKey: snapshotMarkers.modelKey,
+            externalRecallHash: snapshotMarkers.externalRecallHash,
         });
 
         // v2 path persists the rendered-memory identity itself. `memory_block_ids`
@@ -1645,6 +1656,7 @@ interface CachedM0M1Row {
     cached_m0_system_hash: string | null;
     cached_m0_tool_set_hash: string | null;
     cached_m0_model_key: string | null;
+    cached_m0_external_recall_hash: string | null;
     memory_block_ids: string | null;
 }
 
@@ -1690,6 +1702,7 @@ function readCachedM0M1Row(db: Database, sessionId: string): CachedM0M1Row | nul
                     cached_m0_system_hash,
                     cached_m0_tool_set_hash,
                     cached_m0_model_key,
+                    cached_m0_external_recall_hash,
                     memory_block_ids
                FROM session_meta
               WHERE session_id = ?`,
@@ -1720,6 +1733,7 @@ function markersFromCachedRow(row: CachedM0M1Row): M0SnapshotMarkers | null {
         systemHash: row.cached_m0_system_hash ?? "",
         toolSetHash: row.cached_m0_tool_set_hash ?? "",
         modelKey: row.cached_m0_model_key ?? "",
+        externalRecallHash: row.cached_m0_external_recall_hash ?? "",
     };
 }
 
@@ -1738,7 +1752,8 @@ function cachedRowMatchesState(row: CachedM0M1Row, state: M0M1State): boolean {
         (row.cached_m0_upgrade_state ?? null) === (state.cachedM0UpgradeState ?? null) &&
         (row.cached_m0_system_hash ?? "") === (state.cachedM0SystemHash ?? "") &&
         (row.cached_m0_tool_set_hash ?? "") === (state.cachedM0ToolSetHash ?? "") &&
-        (row.cached_m0_model_key ?? "") === (state.cachedM0ModelKey ?? "")
+        (row.cached_m0_model_key ?? "") === (state.cachedM0ModelKey ?? "") &&
+        (row.cached_m0_external_recall_hash ?? "") === (state.cachedM0ExternalRecallHash ?? "")
     );
 }
 
@@ -1762,6 +1777,7 @@ function applyCachedRowToState(state: M0M1State, row: CachedM0M1Row): void {
     state.cachedM0SystemHash = markers.systemHash;
     state.cachedM0ToolSetHash = markers.toolSetHash;
     state.cachedM0ModelKey = markers.modelKey;
+    state.cachedM0ExternalRecallHash = markers.externalRecallHash;
     state.snapshotMarkers = markers;
 }
 
