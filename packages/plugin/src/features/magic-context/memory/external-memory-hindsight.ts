@@ -1,7 +1,14 @@
 import type { ExternalMemoryConfig } from "../../../config/schema/magic-context";
 import { log } from "../../../shared/logger";
 import { blockedEmbeddingEndpointReason } from "./embedding-ssrf";
-import type { ExternalMemoryBackend, ExternalMemoryRetainItem } from "./external-memory-provider";
+import type {
+    ExternalMemoryBackend,
+    ExternalMemoryRecallQuery,
+    ExternalMemoryRecallResult,
+    ExternalMemoryRemoveItem,
+    ExternalMemoryRetainItem,
+    ExternalMemoryScope,
+} from "./external-memory-provider";
 import { computeNormalizedHash } from "./normalize-hash";
 
 type HindsightConfig = Extract<ExternalMemoryConfig, { provider: "hindsight" }>;
@@ -41,6 +48,7 @@ export class HindsightMemoryBackend implements ExternalMemoryBackend {
     private readonly projectBankTemplate: string;
     private readonly mainBank: string;
     private readonly staticTags: readonly string[];
+    private readonly recallGlobalTags: readonly string[];
     private initialized = false;
     private readonly ensuredBanks = new Set<string>();
 
@@ -56,6 +64,7 @@ export class HindsightMemoryBackend implements ExternalMemoryBackend {
         this.projectBankTemplate = config.project_bank;
         this.mainBank = config.main_bank;
         this.staticTags = config.tags;
+        this.recallGlobalTags = config.recall?.global_tags ?? [];
         this.backendId = `hindsight:${this.endpoint}:${this.mainBank}:${this.projectBankTemplate}`;
     }
 
@@ -75,17 +84,34 @@ export class HindsightMemoryBackend implements ExternalMemoryBackend {
     }
 
     resolveBank(item: ExternalMemoryRetainItem): string {
-        if (item.scope === "project" && item.projectIdentity) {
-            const id8 = item.projectIdentity.replace(/^(git:|dir:)/, "").slice(0, 8);
-            const name = sanitizeBankSegment(item.projectName ?? "project");
+        return this.resolveBankForScope(item.scope, item.projectIdentity, item.projectName);
+    }
+
+    private resolveBankForScope(
+        scope: ExternalMemoryScope,
+        projectIdentity?: string,
+        projectName?: string,
+    ): string {
+        if (scope === "project" && projectIdentity) {
+            const id8 = projectIdentity.replace(/^(git:|dir:)/, "").slice(0, 8);
+            const name = sanitizeBankSegment(projectName ?? "project");
             return this.projectBankTemplate.replace("{name}", name).replace("{id8}", id8);
         }
         return this.mainBank;
     }
 
-    buildMemoryItem(item: ExternalMemoryRetainItem): Record<string, unknown> {
+    private documentIdFor(item: {
+        scope: ExternalMemoryScope;
+        projectIdentity?: string;
+        category: string;
+        content: string;
+    }): string {
         const scopeKey =
             item.scope === "project" ? (item.projectIdentity ?? "project") : item.scope;
+        return `mc:${scopeKey}:${item.category}:${computeNormalizedHash(item.content)}`;
+    }
+
+    buildMemoryItem(item: ExternalMemoryRetainItem): Record<string, unknown> {
         const scopeTags =
             item.scope === "project" && item.projectIdentity
                 ? [
@@ -96,12 +122,13 @@ export class HindsightMemoryBackend implements ExternalMemoryBackend {
         return {
             content: item.content,
             context: RETAIN_CONTEXT,
-            document_id: `mc:${scopeKey}:${item.category}:${computeNormalizedHash(item.content)}`,
+            document_id: this.documentIdFor(item),
             metadata: {
                 source: "magic-context",
                 category: item.category,
                 ...(item.projectIdentity ? { project_path: item.projectIdentity } : {}),
                 ...(item.sessionId ? { session_id: item.sessionId } : {}),
+                ...(item.verifiedAt ? { verified_at: item.verifiedAt } : {}),
             },
             tags: [
                 "source:magic-context",
@@ -133,6 +160,77 @@ export class HindsightMemoryBackend implements ExternalMemoryBackend {
             }
         }
         return accepted;
+    }
+
+    async recall(
+        query: ExternalMemoryRecallQuery,
+        signal?: AbortSignal,
+    ): Promise<ExternalMemoryRecallResult[]> {
+        if (!(await this.initialize())) return [];
+        const scope = query.scope ?? "global";
+        const bank = this.resolveBankForScope(scope, query.projectIdentity, query.projectName);
+        const filter =
+            scope === "user"
+                ? { tags: ["scope:user"], tags_match: "any_strict" }
+                : scope === "global" && this.recallGlobalTags.length > 0
+                  ? { tags: [...this.recallGlobalTags], tags_match: "any" }
+                  : {};
+        const response = await this.request(
+            "POST",
+            `/v1/default/banks/${encodeURIComponent(bank)}/memories/recall`,
+            {
+                query: query.query,
+                types: ["world", "observation"],
+                budget: "mid",
+                ...(query.maxTokens ? { max_tokens: query.maxTokens } : {}),
+                ...filter,
+            },
+            signal,
+            { benign404: true },
+        );
+        if (!response || response.status === 404) return [];
+        const body = (await response.json().catch(() => null)) as {
+            results?: Array<{ text?: string; score?: number; tags?: string[] }>;
+        } | null;
+        const results: ExternalMemoryRecallResult[] = [];
+        for (const r of body?.results ?? []) {
+            if (typeof r.text !== "string" || r.text.length === 0) continue;
+            const categoryTag = (r.tags ?? []).find((t) => t.startsWith("category:"));
+            results.push({
+                content: r.text,
+                ...(typeof r.score === "number" ? { score: r.score } : {}),
+                ...(categoryTag ? { category: categoryTag.slice("category:".length) } : {}),
+            });
+            if (query.limit && results.length >= query.limit) break;
+        }
+        return results;
+    }
+
+    async remove(items: ExternalMemoryRemoveItem[], signal?: AbortSignal): Promise<number> {
+        if (items.length === 0) return 0;
+        if (!(await this.initialize())) return 0;
+        let removed = 0;
+        for (const item of items) {
+            try {
+                const bank = this.resolveBankForScope(
+                    item.scope,
+                    item.projectIdentity,
+                    item.projectName,
+                );
+                const documentId = this.documentIdFor(item);
+                const response = await this.request(
+                    "DELETE",
+                    `/v1/default/banks/${encodeURIComponent(bank)}/documents/${encodeURIComponent(documentId)}`,
+                    undefined,
+                    signal,
+                    { benign404: true },
+                );
+                if (response) removed += 1; // 2xx or benign 404 (already gone)
+            } catch (error) {
+                log("[magic-context] hindsight remove failed:", error);
+            }
+        }
+        return removed;
     }
 
     private async ensureBank(bank: string, signal?: AbortSignal): Promise<boolean> {
@@ -178,6 +276,7 @@ export class HindsightMemoryBackend implements ExternalMemoryBackend {
         path: string,
         body?: unknown,
         signal?: AbortSignal,
+        opts?: { benign404?: boolean },
     ): Promise<Response | null> {
         if (signal?.aborted) return null;
         let isProbe = false;
@@ -204,6 +303,10 @@ export class HindsightMemoryBackend implements ExternalMemoryBackend {
                 signal: internalController.signal,
             });
 
+            if (response.status === 404 && opts?.benign404) {
+                this.recordSuccess();
+                return response;
+            }
             if (response.status === 422) {
                 log(
                     `[magic-context] hindsight memory defense rejected content (${method} ${path}) — not retrying`,
