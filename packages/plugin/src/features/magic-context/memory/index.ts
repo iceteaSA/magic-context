@@ -4,6 +4,8 @@ export * from "./embedding-backfill";
 export * from "./embedding-cache";
 export * from "./external-memory";
 export * from "./external-memory-provider";
+export * from "./external-recall";
+export * from "./external-recall-read";
 export * from "./normalize-hash";
 export * from "./project-identity";
 export { promoteSessionFactsToMemory } from "./promotion";

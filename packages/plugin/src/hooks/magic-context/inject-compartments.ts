@@ -15,6 +15,7 @@ import {
     MEMORY_CATEGORY_ORDER_SQL,
     MEMORY_CATEGORY_ORDER_UNKNOWN,
 } from "../../features/magic-context/memory/constants";
+import { readExternalRecallHash } from "../../features/magic-context/memory/external-recall-read";
 import {
     getMemoriesByProject,
     getMemorySelectColumns,
@@ -35,7 +36,6 @@ import {
     getActiveUserMemories,
     type UserMemory,
 } from "../../features/magic-context/user-memory/storage-user-memory";
-import { readExternalRecallHash } from "../../features/magic-context/memory/external-recall-read";
 import { BoundedSessionMap } from "../../shared/bounded-session-map";
 import { sessionLog } from "../../shared/logger";
 import type { Database, Statement as PreparedStatement } from "../../shared/sqlite";
