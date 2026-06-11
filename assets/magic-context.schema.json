@@ -695,22 +695,6 @@
       }
     },
     "memory": {
-      "default": {
-        "enabled": true,
-        "injection_budget_tokens": 4000,
-        "auto_promote": true,
-        "retrieval_count_promotion_threshold": 3,
-        "auto_search": {
-          "enabled": true,
-          "score_threshold": 0.6,
-          "min_prompt_chars": 20
-        },
-        "git_commit_indexing": {
-          "enabled": false,
-          "since_days": 365,
-          "max_commits": 2000
-        }
-      },
       "description": "Cross-session memory configuration",
       "type": "object",
       "properties": {
@@ -794,6 +778,63 @@
               "type": "number",
               "minimum": 100,
               "maximum": 20000
+            }
+          }
+        },
+        "external": {
+          "description": "External long-term memory backend (tee). USER config only.",
+          "type": "object",
+          "properties": {
+            "provider": {
+              "default": "off",
+              "description": "External memory backend. 'hindsight' tees memory creations to a Hindsight service; 'off' disables (default). SECURITY: this whole block only honors USER-level config.",
+              "type": "string",
+              "enum": [
+                "hindsight",
+                "off"
+              ]
+            },
+            "endpoint": {
+              "description": "Backend base URL (e.g. http://10.1.1.1:8889). Required when provider is hindsight.",
+              "type": "string"
+            },
+            "api_key": {
+              "description": "Bearer token for the backend (optional).",
+              "type": "string"
+            },
+            "project_bank": {
+              "default": "mc-{name}-{id8}",
+              "description": "Bank name template for project-scoped items. Placeholders: {name}=project basename, {id8}=first 8 chars of the project identity hash.",
+              "type": "string"
+            },
+            "main_bank": {
+              "description": "Bank for user- and global-scoped items. Required when provider is hindsight. Assumed to pre-exist; never created or modified.",
+              "type": "string"
+            },
+            "retain_sources": {
+              "default": [
+                "historian",
+                "agent",
+                "dreamer"
+              ],
+              "description": "Which creation points tee: historian promotion, agent ctx_memory writes, dreamer user-memory promotion.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "historian",
+                  "agent",
+                  "dreamer"
+                ]
+              }
+            },
+            "tags": {
+              "default": [],
+              "description": "Static tags attached to every retained item.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           }
         }
