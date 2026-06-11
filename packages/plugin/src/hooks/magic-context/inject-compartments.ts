@@ -15,7 +15,13 @@ import {
     MEMORY_CATEGORY_ORDER_SQL,
     MEMORY_CATEGORY_ORDER_UNKNOWN,
 } from "../../features/magic-context/memory/constants";
-import { readExternalRecallHash } from "../../features/magic-context/memory/external-recall-read";
+import {
+    computeRecallSnapshotHash,
+    type ExternalRecallSliceItem,
+    type ExternalRecallSnapshot,
+    readExternalRecallHash,
+    readExternalRecallSnapshot,
+} from "../../features/magic-context/memory/external-recall-read";
 import {
     getMemoriesByProject,
     getMemorySelectColumns,
@@ -1142,14 +1148,42 @@ export function renderMemoryBlockV2(memories: Memory[], wrapper = "project-memor
     return lines.join("\n");
 }
 
-function renderUserProfileBlock(memories: UserMemory[], wrapper = "user-profile"): string {
-    if (memories.length === 0) return "";
+function renderUserProfileBlock(
+    memories: UserMemory[],
+    wrapper = "user-profile",
+    externalLines: readonly ExternalRecallSliceItem[] = [],
+): string {
+    if (memories.length === 0 && externalLines.length === 0) return "";
     const lines = [`<${wrapper}>`];
     for (const memory of memories) {
         lines.push(`- ${escapeXmlContent(memory.content)}`);
     }
+    for (const item of externalLines) {
+        lines.push(`- ${escapeXmlContent(item.content)}`);
+    }
     lines.push(`</${wrapper}>`);
     return lines.join("\n");
+}
+
+/** Sibling block after <project-memory>: project + global recall slices.
+ *  Plain lines, content verbatim — no fake ids (recalled items are not
+ *  ctx_memory-addressable rows). */
+export function renderExternalMemoryBlock(snapshot: ExternalRecallSnapshot): string {
+    const lines = [...snapshot.project, ...snapshot.global].map(
+        (item) => `- ${escapeXmlContent(item.content)}`,
+    );
+    if (lines.length === 0) return "";
+    return `<external-memory source="hindsight">\n${lines.join("\n")}\n</external-memory>`;
+}
+
+/** m[1] delta when recall settles after the last m[0] fold — carries ALL
+ *  slices (profile lines reconcile into <user-profile> at the next HARD fold). */
+function renderExternalMemoryDelta(snapshot: ExternalRecallSnapshot): string {
+    const lines = [...snapshot.project, ...snapshot.global, ...snapshot.profile].map(
+        (item) => `- ${escapeXmlContent(item.content)}`,
+    );
+    if (lines.length === 0) return "";
+    return `<external-memory source="hindsight">\n${lines.join("\n")}\n</external-memory>`;
 }
 
 /**
@@ -1179,6 +1213,7 @@ export function renderM0(args: {
     historyBudgetTokens?: number;
     userProfileBudgetTokens?: number;
     decayPressureMultiplier?: number;
+    externalRecall?: ExternalRecallSnapshot | null;
 }): string {
     const sections: string[] = [];
     if (args.projectDocs.length > 0) sections.push(args.projectDocs);
@@ -1187,6 +1222,8 @@ export function renderM0(args: {
             args.userProfileBaseline,
             args.userProfileBudgetTokens ?? DEFAULT_USER_PROFILE_BUDGET_TOKENS,
         ),
+        "user-profile",
+        args.externalRecall?.profile ?? [],
     );
     if (userProfile) sections.push(userProfile);
 
@@ -1207,6 +1244,10 @@ export function renderM0(args: {
 
     const memoriesBlock = renderMemoryBlockV2(args.memories);
     if (memoriesBlock) sections.push(memoriesBlock);
+    if (args.externalRecall) {
+        const externalBlock = renderExternalMemoryBlock(args.externalRecall);
+        if (externalBlock) sections.push(externalBlock);
+    }
     return sections.join("\n\n").trim();
 }
 
@@ -1265,6 +1306,7 @@ export function materializeM0(options: M0M1RenderOptions): MaterializeM0Result {
     let facts: SessionFact[] = [];
     let memories: Memory[] = [];
     let userMemories: UserMemory[] = [];
+    let externalRecall: ExternalRecallSnapshot | null = null;
     let docs: { renderedBlock: string; canonicalHash: string } = {
         renderedBlock: "",
         canonicalHash: "",
@@ -1293,6 +1335,13 @@ export function materializeM0(options: M0M1RenderOptions): MaterializeM0Result {
             ? getMemoriesByProject(options.db, projectPath, ["active", "permanent"])
             : [];
         userMemories = safeGetActiveUserMemories(options.db);
+        // In-transaction read of the persisted external recall snapshot. Overrides
+        // the value readCurrentM0SnapshotMarkers set so render and marker derive
+        // from the SAME read (no TOCTOU) — mirrors how projectDocsHash is
+        // overwritten from readProjectDocsCanonical above.
+        const recall = readExternalRecallSnapshot(options.db, options.sessionId);
+        externalRecall = recall.state === "done" ? recall.snapshot : null;
+        snapshotMarkers.externalRecallHash = computeRecallSnapshotHash(externalRecall);
         options.db.exec("COMMIT");
     } catch (error) {
         try {
@@ -1315,6 +1364,7 @@ export function materializeM0(options: M0M1RenderOptions): MaterializeM0Result {
         historyBudgetTokens: options.historyBudgetTokens ?? DEFAULT_HISTORY_BUDGET_TOKENS,
         userProfileBudgetTokens: options.userProfileBudgetTokens,
         decayPressureMultiplier,
+        externalRecall,
     });
 
     let attempts = 0;
@@ -1330,6 +1380,7 @@ export function materializeM0(options: M0M1RenderOptions): MaterializeM0Result {
             historyBudgetTokens: budget,
             userProfileBudgetTokens: options.userProfileBudgetTokens,
             decayPressureMultiplier,
+            externalRecall,
         });
         attempts += 1;
     }
@@ -1612,6 +1663,19 @@ function renderM1WithMetadata(
             "new-user-profile",
         );
         if (profileBlock) blocks.push(profileBlock);
+    }
+
+    // External recall delta: snapshot settled AFTER the last m[0] fold. We
+    // intentionally compare the live snapshot hash to markers.externalRecallHash
+    // (not the DB column) so a sibling that materialized between passes and
+    // updated the column does NOT leak a stale delta in this soft-refresh.
+    const recallRead = readExternalRecallSnapshot(options.db, options.sessionId);
+    if (recallRead.state === "done" && recallRead.snapshot) {
+        const currentRecallHash = computeRecallSnapshotHash(recallRead.snapshot);
+        if (currentRecallHash !== "" && currentRecallHash !== markers.externalRecallHash) {
+            const delta = renderExternalMemoryDelta(recallRead.snapshot);
+            if (delta) blocks.push(delta);
+        }
     }
 
     // v2 faithful facts: session_facts is retired as a render source. Fresh
@@ -1908,6 +1972,11 @@ function renderFreshM0NonPersisted(options: M0M1RenderOptions): {
           )
         : [];
     const userMemories = safeGetActiveUserMemories(options.db);
+    // External recall read mirrors materializeM0: render and marker must derive
+    // from the same read.
+    const recallRead = readExternalRecallSnapshot(options.db, options.sessionId);
+    const externalRecall = recallRead.state === "done" ? recallRead.snapshot : null;
+    snapshotMarkers.externalRecallHash = computeRecallSnapshotHash(externalRecall);
     const memoryBudget = options.memoryInjectionBudgetTokens ?? DEFAULT_MEMORY_BUDGET_TOKENS;
     const trimmed = trimMemoriesToBudgetV2(options.sessionId, memories, memoryBudget);
     const budget = options.historyBudgetTokens ?? DEFAULT_HISTORY_BUDGET_TOKENS;
@@ -1921,6 +1990,7 @@ function renderFreshM0NonPersisted(options: M0M1RenderOptions): {
         historyBudgetTokens: budget,
         userProfileBudgetTokens: options.userProfileBudgetTokens,
         decayPressureMultiplier,
+        externalRecall,
     });
     let attempts = 0;
     while (budget > 0 && historySliceTokens(m0Text) > budget * 1.05 && attempts < 3) {
@@ -1934,6 +2004,7 @@ function renderFreshM0NonPersisted(options: M0M1RenderOptions): {
             historyBudgetTokens: budget,
             userProfileBudgetTokens: options.userProfileBudgetTokens,
             decayPressureMultiplier,
+            externalRecall,
         });
         attempts += 1;
     }
