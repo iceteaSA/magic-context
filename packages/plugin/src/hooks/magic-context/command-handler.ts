@@ -794,7 +794,7 @@ export function createMagicContextCommandHandler(deps: {
                         ? (rustTailHygiene as WireTailHygieneBaseline)
                         : undefined,
                 );
-                const statusOutput = executeStatus(
+                const statusOutput = await executeStatus(
                     deps.db,
                     sessionId,
                     deps.protectedTags,
