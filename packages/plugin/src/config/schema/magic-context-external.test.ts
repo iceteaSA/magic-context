@@ -40,6 +40,62 @@ describe("MagicContextConfigSchema memory.external.recall", () => {
         expect(result.success).toBe(false);
     });
 
+    test("recall timeout_ms rejects above max (15000)", () => {
+        const result = MagicContextConfigSchema.safeParse({
+            memory: {
+                external: {
+                    provider: "hindsight",
+                    endpoint: "http://10.1.1.1:8889",
+                    main_bank: "icetea-main",
+                    recall: { timeout_ms: 20000 },
+                },
+            },
+        });
+        expect(result.success).toBe(false);
+    });
+
+    test("recall max_tokens rejects below min (256)", () => {
+        const result = MagicContextConfigSchema.safeParse({
+            memory: {
+                external: {
+                    provider: "hindsight",
+                    endpoint: "http://10.1.1.1:8889",
+                    main_bank: "icetea-main",
+                    recall: { max_tokens: 100 },
+                },
+            },
+        });
+        expect(result.success).toBe(false);
+    });
+
+    test("recall max_tokens rejects above max (8192)", () => {
+        const result = MagicContextConfigSchema.safeParse({
+            memory: {
+                external: {
+                    provider: "hindsight",
+                    endpoint: "http://10.1.1.1:8889",
+                    main_bank: "icetea-main",
+                    recall: { max_tokens: 10000 },
+                },
+            },
+        });
+        expect(result.success).toBe(false);
+    });
+
+    test("recall dedup_threshold rejects below min (0.5)", () => {
+        const result = MagicContextConfigSchema.safeParse({
+            memory: {
+                external: {
+                    provider: "hindsight",
+                    endpoint: "http://10.1.1.1:8889",
+                    main_bank: "icetea-main",
+                    recall: { dedup_threshold: 0.3 },
+                },
+            },
+        });
+        expect(result.success).toBe(false);
+    });
+
     test("provider off ignores recall block", () => {
         const config = MagicContextConfigSchema.parse({
             memory: { external: { provider: "off", recall: { enabled: true } } },

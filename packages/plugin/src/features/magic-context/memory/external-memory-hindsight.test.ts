@@ -299,4 +299,35 @@ describe("HindsightMemoryBackend recall/remove", () => {
         const body = JSON.parse(String(post?.init.body));
         expect(body.items[0].metadata.verified_at).toBe(1750000000000);
     });
+
+    test("recall never throws when results is not an array (malformed 200 body)", async () => {
+        responder = () => okJson({ results: {} });
+        const backend = makeBackend();
+        await expect(backend.recall({ query: "q" })).resolves.toEqual([]);
+    });
+
+    test("recall never throws when an item's tags is not an array", async () => {
+        responder = () =>
+            okJson({
+                results: [{ id: "1", text: "fact A", type: "world", tags: "not-an-array" }],
+            });
+        const backend = makeBackend();
+        await expect(backend.recall({ query: "q" })).resolves.toEqual([{ content: "fact A" }]);
+    });
+
+    test("project scope without projectIdentity short-circuits to [] with zero fetch requests", async () => {
+        const backend = makeBackend();
+        const results = await backend.recall({ query: "q", scope: "project" });
+        expect(results).toEqual([]);
+        expect(requests.length).toBe(0);
+    });
+
+    test("remove skips project items without projectIdentity (no DELETE, returns 0)", async () => {
+        const backend = makeBackend();
+        const removed = await backend.remove([
+            { content: "x", category: "PROJECT_RULES", scope: "project" },
+        ]);
+        expect(removed).toBe(0);
+        expect(requests.filter((r) => r.init.method === "DELETE").length).toBe(0);
+    });
 });
