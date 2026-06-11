@@ -183,7 +183,34 @@ describe("createCtxSearchTools", () => {
                 content: "Summary",
             },
         ]);
+        // Upstream's message indexer only indexes CONTIGUOUS ordinals from the
+        // watermark, so the target message at ordinal 5 needs ordinals 1-4 present
+        // in the same page (a lone ordinal-5 with a gap never indexes).
         const indexed = [
+            {
+                ordinal: 1,
+                id: "m1x",
+                role: "user",
+                parts: [{ type: "text", text: "Setup context one." }],
+            },
+            {
+                ordinal: 2,
+                id: "m2x",
+                role: "assistant",
+                parts: [{ type: "text", text: "Setup context two." }],
+            },
+            {
+                ordinal: 3,
+                id: "m3x",
+                role: "user",
+                parts: [{ type: "text", text: "Setup context three." }],
+            },
+            {
+                ordinal: 4,
+                id: "m4x",
+                role: "assistant",
+                parts: [{ type: "text", text: "Setup context four." }],
+            },
             {
                 ordinal: 5,
                 id: "m5",

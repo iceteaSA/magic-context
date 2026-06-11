@@ -8,6 +8,7 @@ import { extractLatestAssistantText } from "../../../shared/assistant-message-ex
 import { shouldKeepSubagents } from "../../../shared/keep-subagents";
 import { log, sessionLog } from "../../../shared/logger";
 import { resolveFallbackChain } from "../../../shared/resolve-fallbacks";
+import { registerSessionParent } from "../session-parent-registry";
 import { openDatabase } from "../storage";
 import { recordChildInvocation } from "../subagent-token-capture";
 import { SIDEKICK_SYSTEM_PROMPT, stripThinkingBlocks } from "./core";
@@ -80,6 +81,14 @@ export async function runSidekick(deps: {
                 SIDEKICK_SYSTEM_PROMPT,
             deps.language,
         );
+
+        // Synchronous belt-and-braces alongside the session.created event
+        // registration: sidekick's ctx_search calls must resolve to the parent
+        // conversation even if async event delivery races the child's first
+        // tool call. Cleanup rides session.deleted / LRU eviction.
+        if (deps.sessionId) {
+            registerSessionParent(agentSessionId, deps.sessionId);
+        }
 
         const sidekickRun = await shared.promptSyncWithValidatedOutputRetry(
             deps.client,
