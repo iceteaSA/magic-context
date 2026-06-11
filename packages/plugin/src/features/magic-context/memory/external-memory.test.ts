@@ -2,10 +2,21 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
     _resetExternalMemoryForTests,
     _setTestExternalBackendFactory,
+    getExternalRecallConfig,
     initializeExternalMemory,
+    isExternalSearchEnabled,
+    recallFromExternalBackend,
+    removeFromExternalBackend,
     teeToExternalBackend,
+    upsertToExternalBackend,
 } from "./external-memory";
-import type { ExternalMemoryBackend, ExternalMemoryRetainItem } from "./external-memory-provider";
+import type {
+    ExternalMemoryBackend,
+    ExternalMemoryRecallQuery,
+    ExternalMemoryRecallResult,
+    ExternalMemoryRemoveItem,
+    ExternalMemoryRetainItem,
+} from "./external-memory-provider";
 
 function makeFakeBackend(calls: ExternalMemoryRetainItem[][]): ExternalMemoryBackend {
     return {
@@ -114,5 +125,107 @@ describe("teeToExternalBackend", () => {
         initializeExternalMemory({ ...HINDSIGHT_TEST_CONFIG, endpoint: "http://10.1.1.2:8889" });
         await teeToExternalBackend("historian", [item]);
         expect(created).toBe(2);
+    });
+});
+
+function makeRecallBackend(captured: {
+    recalls: ExternalMemoryRecallQuery[];
+    removes: ExternalMemoryRemoveItem[][];
+    retains: ExternalMemoryRetainItem[][];
+}): ExternalMemoryBackend {
+    return {
+        backendId: "fake:recall",
+        initialize: async () => true,
+        retain: async (items) => {
+            captured.retains.push([...items]);
+            return items.length;
+        },
+        recall: async (query) => {
+            captured.recalls.push(query);
+            return [{ content: "ext fact", category: "ARCHITECTURE" }];
+        },
+        remove: async (items) => {
+            captured.removes.push([...items]);
+            return items.length;
+        },
+        dispose: async () => {},
+    };
+}
+
+describe("ungated v2 orchestrator paths", () => {
+    test("recallFromExternalBackend returns results when provider on", async () => {
+        const captured = {
+            recalls: [],
+            removes: [],
+            retains: [],
+        } as Parameters<typeof makeRecallBackend>[0];
+        _setTestExternalBackendFactory(() => makeRecallBackend(captured));
+        initializeExternalMemory(HINDSIGHT_TEST_CONFIG);
+        const results = await recallFromExternalBackend({ query: "q", scope: "project" });
+        expect(results).toEqual([{ content: "ext fact", category: "ARCHITECTURE" }]);
+        expect(captured.recalls.length).toBe(1);
+    });
+
+    test("recallFromExternalBackend returns [] when provider off", async () => {
+        initializeExternalMemory({ provider: "off" });
+        expect(await recallFromExternalBackend({ query: "q" })).toEqual([]);
+    });
+
+    test("recallFromExternalBackend never throws", async () => {
+        _setTestExternalBackendFactory(() => ({
+            backendId: "fake:boom",
+            initialize: async () => true,
+            retain: async () => 0,
+            recall: async () => {
+                throw new Error("boom");
+            },
+            dispose: async () => {},
+        }));
+        initializeExternalMemory(HINDSIGHT_TEST_CONFIG);
+        await expect(recallFromExternalBackend({ query: "q" })).resolves.toEqual([]);
+    });
+
+    test("removeFromExternalBackend ignores retain_sources filter", async () => {
+        const captured = {
+            recalls: [],
+            removes: [],
+            retains: [],
+        } as Parameters<typeof makeRecallBackend>[0];
+        _setTestExternalBackendFactory(() => makeRecallBackend(captured));
+        initializeExternalMemory({ ...HINDSIGHT_TEST_CONFIG, retain_sources: [] });
+        await removeFromExternalBackend([
+            { content: "x", category: "PROJECT_RULES", scope: "project", projectIdentity: "git:a" },
+        ]);
+        expect(captured.removes.length).toBe(1);
+    });
+
+    test("upsertToExternalBackend ignores retain_sources filter", async () => {
+        const captured = {
+            recalls: [],
+            removes: [],
+            retains: [],
+        } as Parameters<typeof makeRecallBackend>[0];
+        _setTestExternalBackendFactory(() => makeRecallBackend(captured));
+        initializeExternalMemory({ ...HINDSIGHT_TEST_CONFIG, retain_sources: [] });
+        await upsertToExternalBackend([
+            {
+                content: "x",
+                category: "PROJECT_RULES",
+                scope: "project",
+                projectIdentity: "git:a",
+                sourceType: "dreamer",
+                verifiedAt: 123,
+            },
+        ]);
+        expect(captured.retains.length).toBe(1);
+        expect(captured.retains[0][0].verifiedAt).toBe(123);
+    });
+
+    test("getExternalRecallConfig reflects provider state", () => {
+        initializeExternalMemory({ provider: "off" });
+        expect(getExternalRecallConfig()).toBeNull();
+        initializeExternalMemory(HINDSIGHT_TEST_CONFIG);
+        expect(getExternalRecallConfig()?.enabled).toBe(true);
+        expect(isExternalSearchEnabled()).toBe(true);
     });
 });

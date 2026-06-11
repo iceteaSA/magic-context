@@ -1,10 +1,17 @@
 import type {
     ExternalMemoryConfig,
     ExternalMemoryRetainSource,
+    ExternalRecallConfig,
 } from "../../../config/schema/magic-context";
 import { log } from "../../../shared/logger";
 import { HindsightMemoryBackend } from "./external-memory-hindsight";
-import type { ExternalMemoryBackend, ExternalMemoryRetainItem } from "./external-memory-provider";
+import type {
+    ExternalMemoryBackend,
+    ExternalMemoryRecallQuery,
+    ExternalMemoryRecallResult,
+    ExternalMemoryRemoveItem,
+    ExternalMemoryRetainItem,
+} from "./external-memory-provider";
 
 const OFF_CONFIG: ExternalMemoryConfig = { provider: "off" };
 
@@ -74,6 +81,74 @@ export async function teeToExternalBackend(
         }
     } catch (error) {
         log("[magic-context] external memory tee failed:", error);
+    }
+}
+
+/** Resolved recall config, or null when the provider is off. */
+export function getExternalRecallConfig(): ExternalRecallConfig | null {
+    if (externalConfig.provider === "off") return null;
+    return externalConfig.recall;
+}
+
+export function isExternalSearchEnabled(): boolean {
+    const recall = getExternalRecallConfig();
+    return recall !== null && recall.search === true;
+}
+
+/**
+ * Direct recall against the external backend. UNGATED by retain_sources
+ * (read path). Never throws; [] when off/unsupported/failing.
+ */
+export async function recallFromExternalBackend(
+    query: ExternalMemoryRecallQuery,
+    signal?: AbortSignal,
+): Promise<ExternalMemoryRecallResult[]> {
+    try {
+        if (externalConfig.provider === "off") return [];
+        const current = getOrCreateBackend();
+        if (!current?.recall) return [];
+        if (!(await current.initialize())) return [];
+        return await current.recall(query, signal);
+    } catch (error) {
+        log("[magic-context] external memory recall failed:", error);
+        return [];
+    }
+}
+
+/**
+ * Corrective removal. UNGATED by retain_sources (consistency propagation,
+ * not a retain source). Fire-and-forget; never throws.
+ */
+export async function removeFromExternalBackend(items: ExternalMemoryRemoveItem[]): Promise<void> {
+    try {
+        if (items.length === 0) return;
+        if (externalConfig.provider === "off") return;
+        const current = getOrCreateBackend();
+        if (!current?.remove) return;
+        if (!(await current.initialize())) return;
+        const removed = await current.remove(items);
+        if (removed > 0) {
+            log(`[magic-context] external memory: removed ${removed}/${items.length} item(s)`);
+        }
+    } catch (error) {
+        log("[magic-context] external memory remove failed:", error);
+    }
+}
+
+/**
+ * Corrective upsert (verify-confirmed verbatim re-retain). UNGATED by
+ * retain_sources. Fire-and-forget; never throws.
+ */
+export async function upsertToExternalBackend(items: ExternalMemoryRetainItem[]): Promise<void> {
+    try {
+        if (items.length === 0) return;
+        if (externalConfig.provider === "off") return;
+        const current = getOrCreateBackend();
+        if (!current) return;
+        if (!(await current.initialize())) return;
+        await current.retain(items);
+    } catch (error) {
+        log("[magic-context] external memory upsert failed:", error);
     }
 }
 
