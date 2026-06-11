@@ -106,6 +106,7 @@ export interface SessionMeta {
     cachedM0ModelKey: string | null;
     /** Pi-only HARD marker: project identity captured in the cached m[0] baseline. */
     cachedM0ProjectIdentity: string | null;
+    cachedM0ExternalRecallHash: string | null;
     lastObservedModelKey: string | null;
     lastUsageContextLimit: number;
     priorBoundaryOrdinal: number;

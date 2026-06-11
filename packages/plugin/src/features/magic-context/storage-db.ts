@@ -1486,6 +1486,7 @@ CREATE INDEX IF NOT EXISTS idx_dream_queue_pending ON dream_queue(started_at, en
     ensureColumn(db, "session_meta", "cached_m0_tool_set_hash", "TEXT");
     ensureColumn(db, "session_meta", "cached_m0_model_key", "TEXT");
     ensureColumn(db, "session_meta", "cached_m0_project_identity", "TEXT");
+    ensureColumn(db, "session_meta", "cached_m0_external_recall_hash", "TEXT");
     // Pi-only: frozen baseline boundary (end_message_id) captured at
     // materialization so Pi trims against the snapshot boundary that produced
     // m[0], not a live-recomputed one a concurrent recomp could have moved.
