@@ -461,12 +461,9 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
         //    memory.enabled + auto_promote (issue #44). A user with memory off
         //    gets no memory writes at all; a user with memory on but auto-promote
         //    off still gets search/embedding, just not auto-written memories.
-        const embeddingActive =
-            !!promotionDirectory && deps.embeddingEnabled !== false;
+        const embeddingActive = !!promotionDirectory && deps.embeddingEnabled !== false;
         const promotionActive =
-            !!promotionDirectory &&
-            deps.memoryEnabled !== false &&
-            deps.autoPromote !== false;
+            !!promotionDirectory && deps.memoryEnabled !== false && deps.autoPromote !== false;
 
         // Register the project ONCE up front (not inside the promotion block):
         // embeddings below run even on a discard-last pass that skips promotion,
