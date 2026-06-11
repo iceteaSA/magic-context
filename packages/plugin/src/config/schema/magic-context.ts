@@ -226,6 +226,72 @@ export type EmbeddingConfig = z.infer<typeof EmbeddingConfigSchema>;
 export const EXTERNAL_MEMORY_RETAIN_SOURCES = ["historian", "agent", "dreamer"] as const;
 export type ExternalMemoryRetainSource = (typeof EXTERNAL_MEMORY_RETAIN_SOURCES)[number];
 
+export const ExternalRecallConfigSchema = z
+    .object({
+        enabled: z
+            .boolean()
+            .default(true)
+            .describe(
+                "Session-start recall from the external backend, merged into the context injection (default: true).",
+            ),
+        timeout_ms: z
+            .number()
+            .min(500)
+            .max(15000)
+            .default(3000)
+            .describe(
+                "Max wait for recall at the first render of a session (already cache-cold). Late results ride the m[1] delta. (default: 3000)",
+            ),
+        max_tokens: z
+            .number()
+            .min(256)
+            .max(8192)
+            .default(2048)
+            .describe("Token budget per recall slice (project / profile / global each). (default: 2048)"),
+        dedup_threshold: z
+            .number()
+            .min(0.5)
+            .max(0.99)
+            .default(0.85)
+            .describe(
+                "Cosine similarity above which a recalled item is dropped as a duplicate of a local memory. Hash-only fallback when embeddings are unavailable. (default: 0.85)",
+            ),
+        global_tags: z
+            .array(z.string())
+            .default([])
+            .describe(
+                "Tag filter for the global (main-bank) recall slice, matched with tags_match 'any' (untagged content INCLUDED). Empty = no filter (full autoRecall replacement).",
+            ),
+        search: z
+            .boolean()
+            .default(true)
+            .describe("Expose the ctx_search 'external' source (project + main bank). (default: true)"),
+        mental_models: z
+            .boolean()
+            .default(true)
+            .describe(
+                "Use Hindsight mental models as the fast path for the project/profile recall slices (single GET, server-refreshed), falling back to recall when absent/empty. (default: true)",
+            ),
+        profile_mental_models: z
+            .array(z.string())
+            .default(["user-preferences"])
+            .describe(
+                "Main-bank mental-model names (case-insensitive) used for the profile slice. The main bank is never modified by the plugin — create these manually.",
+            ),
+    })
+    .default({
+        enabled: true,
+        timeout_ms: 3000,
+        max_tokens: 2048,
+        dedup_threshold: 0.85,
+        global_tags: [],
+        search: true,
+        mental_models: true,
+        profile_mental_models: ["user-preferences"],
+    });
+
+export type ExternalRecallConfig = z.infer<typeof ExternalRecallConfigSchema>;
+
 const BaseExternalMemoryConfigSchema = z
     .object({
         provider: z
@@ -263,6 +329,9 @@ const BaseExternalMemoryConfigSchema = z
             .array(z.string())
             .default([])
             .describe("Static tags attached to every retained item."),
+        recall: ExternalRecallConfigSchema.describe(
+            "Unified read path: session-start recall + ctx_search external source.",
+        ),
     })
     .superRefine((data, ctx) => {
         if (data.provider === "hindsight" && !data.endpoint?.trim()) {
@@ -294,6 +363,7 @@ export const ExternalMemoryConfigSchema = BaseExternalMemoryConfigSchema.transfo
         main_bank: data.main_bank?.trim() ?? "",
         retain_sources: data.retain_sources,
         tags: data.tags,
+        recall: data.recall,
     };
 });
 

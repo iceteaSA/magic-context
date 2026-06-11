@@ -835,6 +835,78 @@
               "items": {
                 "type": "string"
               }
+            },
+            "recall": {
+              "default": {
+                "enabled": true,
+                "timeout_ms": 3000,
+                "max_tokens": 2048,
+                "dedup_threshold": 0.85,
+                "global_tags": [],
+                "search": true,
+                "mental_models": true,
+                "profile_mental_models": [
+                  "user-preferences"
+                ]
+              },
+              "description": "Unified read path: session-start recall + ctx_search external source.",
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "default": true,
+                  "description": "Session-start recall from the external backend, merged into the context injection (default: true).",
+                  "type": "boolean"
+                },
+                "timeout_ms": {
+                  "default": 3000,
+                  "description": "Max wait for recall at the first render of a session (already cache-cold). Late results ride the m[1] delta. (default: 3000)",
+                  "type": "number",
+                  "minimum": 500,
+                  "maximum": 15000
+                },
+                "max_tokens": {
+                  "default": 2048,
+                  "description": "Token budget per recall slice (project / profile / global each). (default: 2048)",
+                  "type": "number",
+                  "minimum": 256,
+                  "maximum": 8192
+                },
+                "dedup_threshold": {
+                  "default": 0.85,
+                  "description": "Cosine similarity above which a recalled item is dropped as a duplicate of a local memory. Hash-only fallback when embeddings are unavailable. (default: 0.85)",
+                  "type": "number",
+                  "minimum": 0.5,
+                  "maximum": 0.99
+                },
+                "global_tags": {
+                  "default": [],
+                  "description": "Tag filter for the global (main-bank) recall slice, matched with tags_match 'any' (untagged content INCLUDED). Empty = no filter (full autoRecall replacement).",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "search": {
+                  "default": true,
+                  "description": "Expose the ctx_search 'external' source (project + main bank). (default: true)",
+                  "type": "boolean"
+                },
+                "mental_models": {
+                  "default": true,
+                  "description": "Use Hindsight mental models as the fast path for the project/profile recall slices (single GET, server-refreshed), falling back to recall when absent/empty. (default: true)",
+                  "type": "boolean"
+                },
+                "profile_mental_models": {
+                  "default": [
+                    "user-preferences"
+                  ],
+                  "description": "Main-bank mental-model names (case-insensitive) used for the profile slice. The main bank is never modified by the plugin — create these manually.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
             }
           }
         }
