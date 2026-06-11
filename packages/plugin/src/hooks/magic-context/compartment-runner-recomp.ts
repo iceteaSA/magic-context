@@ -260,9 +260,10 @@ export async function executeContextRecompInternal(deps: CompartmentRunnerDeps):
             // their embeddings must be regenerated — otherwise the rebuilt rows
             // have NULL p1_embedding and vanish from ctx_search semantic results +
             // the dreamer cross-linking substrate. Embedding is the search/linking
-            // substrate (gated on memory-enabled), distinct from fact promotion
-            // (which recomp deliberately skips). Fire-and-forget, best-effort.
-            if (deps.memoryEnabled !== false) {
+            // substrate (gated on the embedding provider), distinct from fact
+            // promotion (which recomp deliberately skips). Fire-and-forget,
+            // best-effort.
+            if (deps.embeddingEnabled !== false) {
                 const projectIdentity = resolveProjectIdentity(sessionDirectory);
                 // Register the project's embedding provider before embedding;
                 // embedTextForProject silently no-ops for unregistered projects,
@@ -575,8 +576,9 @@ export async function executeContextRecompInternal(deps: CompartmentRunnerDeps):
         // handles early-exit/partial cases and already embeds). Without this, a
         // fully-completed recomp leaves NULL p1_embedding → rebuilds vanish from
         // ctx_search + dreamer cross-linking. Embedding is the search substrate
-        // (gated on memory-enabled), distinct from fact promotion (recomp skips).
-        if (deps.memoryEnabled !== false) {
+        // (gated on the embedding provider), distinct from fact promotion (recomp
+        // skips).
+        if (deps.embeddingEnabled !== false) {
             const projectIdentity = resolveProjectIdentity(sessionDirectory);
             // Register the embedding provider first; embedTextForProject silently
             // no-ops for unregistered projects, leaving NULL p1_embedding.

@@ -14,9 +14,9 @@ import { embedTextForProject } from "./project-embedding-registry";
  *     ↔ key-files now").
  *
  * Fire-and-forget + best-effort, mirroring memory promotion: a missing/slow
- * embedding provider must never block or fail a historian publish. Gated by the
- * same `memory.enabled` / `auto_promote` flags as memory promotion (no embedding
- * endpoint hits when memory is off).
+ * embedding provider must never block or fail a historian publish. Gated by
+ * `embedding.provider !== "off"` at the runner call sites (no endpoint hits
+ * when embeddings are off); independent of the memory store flags.
  */
 
 interface CompartmentToEmbed {
