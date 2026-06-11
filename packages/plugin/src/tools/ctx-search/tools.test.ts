@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { replaceAllCompartments } from "../../features/magic-context/compartment-storage";
 import { insertMemory } from "../../features/magic-context/memory";
+import { _resetExternalMemoryForTests } from "../../features/magic-context/memory/external-memory";
 import { indexMessagesAfterOrdinal } from "../../features/magic-context/message-index";
 import { initializeDatabase } from "../../features/magic-context/storage-db";
 import { Database } from "../../shared/sqlite";
@@ -21,11 +22,18 @@ describe("createCtxSearchTools", () => {
     let db: Database;
 
     beforeEach(() => {
+        // The external-memory module keeps a cached backend + test factory at
+        // module scope. search.test.ts's "external search source" suite
+        // configures a stub factory; without this reset, ctx_search's explicit
+        // path (runExternal=true) would route to that stub and surface bogus
+        // hits in tests that expect an empty result set.
+        _resetExternalMemoryForTests();
         db = createTestDb();
     });
 
     afterEach(() => {
         closeQuietly(db);
+        _resetExternalMemoryForTests();
     });
 
     it("validates required query", async () => {
