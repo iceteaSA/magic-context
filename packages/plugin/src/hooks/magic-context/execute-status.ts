@@ -5,6 +5,11 @@ import type {
     DreamTaskProgress,
 } from "../../features/magic-context/dreamer/task-registry";
 import { formatDreamTaskBacklogs } from "../../features/magic-context/dreamer/task-registry";
+import {
+    fetchExternalFailedRetains,
+    getExternalMemoryStatus,
+} from "../../features/magic-context/memory/external-memory";
+import { readExternalRecallSnapshot } from "../../features/magic-context/memory/external-recall-read";
 import { parseCacheTtl } from "../../features/magic-context/scheduler";
 import { getPendingOps } from "../../features/magic-context/storage";
 import { getOrCreateSessionMeta } from "../../features/magic-context/storage-meta";
@@ -54,7 +59,7 @@ function formatExecuteThreshold(detail: ExecuteThresholdDetail, contextLimit: nu
     return `${percentage}%${clampNote}`;
 }
 
-export function executeStatus(
+export async function executeStatus(
     db: Database,
     sessionId: string,
     protectedTags: number,
@@ -69,7 +74,7 @@ export function executeStatus(
     dreamer?: { backlog?: DreamTaskBacklogMap; progress?: DreamTaskProgress | null },
     windowGeometry?: WindowGeometryResult,
     tailHygiene?: TailHygieneStatus,
-): string {
+): Promise<string> {
     // Single source of truth — resolver tells us both the effective percentage AND
     // which config source won (tokens vs percentage). Previously /ctx-status
     // reimplemented the token-match check here and missed progressive base-model
@@ -243,6 +248,25 @@ export function executeStatus(
                 "",
                 "### Dreamer Progress",
                 `- ${dreamer.progress.task}: ${dreamer.progress.processed}/${dreamer.progress.total} processed this run`,
+            );
+        }
+
+        const externalStatus = getExternalMemoryStatus();
+        if (externalStatus) {
+            const { state: recallState } = readExternalRecallSnapshot(db, sessionId);
+            // fetchExternalFailedRetains inherits the 10s fetch timeout and
+            // circuit breaker from HindsightMemoryBackend.request(); null on
+            // every failure path so the field is always safe to surface.
+            const failedRetainCount = await fetchExternalFailedRetains();
+            lines.push(
+                "",
+                "### External memory",
+                `- provider: ${externalStatus.provider} (${externalStatus.endpoint ?? "?"})`,
+                `- circuit: ${externalStatus.circuitState ?? "n/a"}`,
+                `- session recall: ${recallState ?? "not started"}`,
+                ...(failedRetainCount !== null
+                    ? [`- failed retains (server): ${failedRetainCount}`]
+                    : []),
             );
         }
 
