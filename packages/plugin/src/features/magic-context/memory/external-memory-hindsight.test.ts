@@ -30,7 +30,7 @@ afterEach(() => {
     globalThis.fetch = realFetch;
 });
 
-function makeBackend(): HindsightMemoryBackend {
+function makeBackend(mentalModelsEnabled = false): HindsightMemoryBackend {
     return new HindsightMemoryBackend({
         provider: "hindsight",
         endpoint: "http://10.0.0.1:8889",
@@ -46,10 +46,14 @@ function makeBackend(): HindsightMemoryBackend {
             dedup_threshold: 0.85,
             global_tags: ["user:test"],
             search: true,
-            mental_models: false, // recall-only in base backend tests; MM tests come later
+            mental_models: mentalModelsEnabled,
             profile_mental_models: ["user-preferences"],
         },
     });
+}
+
+function makeMmBackend(): HindsightMemoryBackend {
+    return makeBackend(true);
 }
 
 const projectItem: ExternalMemoryRetainItem = {
@@ -329,5 +333,108 @@ describe("HindsightMemoryBackend recall/remove", () => {
         ]);
         expect(removed).toBe(0);
         expect(requests.filter((r) => r.init.method === "DELETE").length).toBe(0);
+    });
+});
+
+describe("HindsightMemoryBackend mental models", () => {
+    test("mentalModels fetches project bank MMs with content", async () => {
+        responder = (url) => {
+            if (url.includes("/mental-models")) {
+                return okJson({
+                    items: [
+                        { id: "mm1", name: "project-conventions", content: "Conventions doc" },
+                        { id: "mm2", name: "project-decisions", content: "" },
+                    ],
+                });
+            }
+            return okJson({});
+        };
+        const backend = makeMmBackend();
+        const results = await backend.mentalModels({
+            scope: "project",
+            projectIdentity: "git:abcdef1234567890",
+            projectName: "magic-context",
+        });
+        const get = requests.find((r) => (r.init.method ?? "GET") === "GET");
+        expect(get?.url).toContain("/v1/default/banks/mc-magic-context-abcdef12/mental-models");
+        expect(get?.url).toContain("detail=content");
+        // empty-content MM excluded
+        expect(results).toEqual([{ content: "Conventions doc", category: "project-conventions" }]);
+    });
+
+    test("mentalModels user scope filters main-bank MMs by configured names", async () => {
+        responder = () =>
+            okJson({
+                items: [
+                    { id: "a", name: "User-Preferences", content: "Prefers terse" },
+                    { id: "b", name: "unrelated-model", content: "Noise" },
+                ],
+            });
+        const backend = makeMmBackend();
+        const results = await backend.mentalModels({ scope: "user" });
+        expect(requests[0].url).toContain("/v1/default/banks/main-memory/mental-models");
+        expect(results).toEqual([{ content: "Prefers terse", category: "User-Preferences" }]);
+    });
+
+    test("mentalModels never throws; [] on failure", async () => {
+        globalThis.fetch = (async () => {
+            throw new Error("ECONNREFUSED");
+        }) as typeof fetch;
+        const backend = makeMmBackend();
+        await expect(
+            backend.mentalModels({ scope: "project", projectIdentity: "git:a", projectName: "x" }),
+        ).resolves.toEqual([]);
+    });
+
+    test("first successful project retain seeds missing MMs once", async () => {
+        const seeded: string[] = [];
+        responder = (url) => {
+            if (url.includes("/mental-models")) {
+                const isPost = false; // overwritten by wrapped fetch
+                void isPost;
+                return okJson({ items: [] });
+            }
+            if (url.endsWith("/v1/default/banks")) {
+                return okJson({ banks: [{ bank_id: "main-memory" }] });
+            }
+            return okJson({ success: true });
+        };
+        const origFetch = globalThis.fetch;
+        globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            requests.push({ url, init: init ?? {} });
+            if (url.includes("/mental-models") && init?.method === "POST") {
+                seeded.push(JSON.parse(String(init.body)).name);
+                return okJson({ mental_model_id: "new", operation_id: "op" });
+            }
+            return responder(url);
+        }) as typeof fetch;
+        const backend = makeMmBackend();
+        await backend.retain([projectItem]);
+        await Bun.sleep(10); // seeding is fire-and-forget after retain
+        expect(seeded.sort()).toEqual(["project-conventions", "project-decisions"]);
+        seeded.length = 0;
+        await backend.retain([projectItem]);
+        await Bun.sleep(10);
+        expect(seeded).toEqual([]); // cached, no re-seed
+        globalThis.fetch = origFetch;
+    });
+
+    test("main bank retains never seed MMs", async () => {
+        const backend = makeMmBackend();
+        await backend.retain([userItem]);
+        await Bun.sleep(10);
+        expect(requests.some((r) => r.url.includes("/mental-models"))).toBe(false);
+    });
+
+    test("mental_models false disables fetch and seeding", async () => {
+        const backend = makeBackend(); // mental_models: false
+        const results = await backend.mentalModels({
+            scope: "project",
+            projectIdentity: "git:a",
+            projectName: "x",
+        });
+        expect(results).toEqual([]);
+        expect(requests.length).toBe(0);
     });
 });

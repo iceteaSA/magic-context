@@ -46,6 +46,12 @@ export interface ExternalMemoryRemoveItem {
     projectName?: string;
 }
 
+export interface ExternalMemoryMentalModelQuery {
+    scope: ExternalMemoryScope;
+    projectIdentity?: string;
+    projectName?: string;
+}
+
 export interface ExternalMemoryBackend {
     /** Identity string (provider + endpoint + banks) — drives singleton
      *  re-creation on config change, like EmbeddingProvider.modelId. */
@@ -60,5 +66,15 @@ export interface ExternalMemoryBackend {
     ): Promise<ExternalMemoryRecallResult[]>;
     /** v2 corrective removal. Never throws; returns count removed (404 counts: already gone). */
     remove?(items: ExternalMemoryRemoveItem[], signal?: AbortSignal): Promise<number>;
+    /** v2 optional fast path: pre-synthesized briefing documents (e.g.
+     *  Hindsight mental models). Never throws; [] when unsupported/empty. */
+    mentalModels?(
+        query: ExternalMemoryMentalModelQuery,
+        signal?: AbortSignal,
+    ): Promise<ExternalMemoryRecallResult[]>;
+    /** Best-effort failed-retain count from the operations endpoint (status
+     *  report). Returns null when the backend is offline, the endpoint is
+     *  missing, or the response is malformed. Never throws. */
+    fetchFailedRetainCount?(signal?: AbortSignal): Promise<number | null>;
     dispose(): Promise<void>;
 }

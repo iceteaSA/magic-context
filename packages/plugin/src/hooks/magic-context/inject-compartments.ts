@@ -1165,25 +1165,84 @@ function renderUserProfileBlock(
     return lines.join("\n");
 }
 
+/** Preamble is the model-facing instruction above every external-memory block.
+ *  Reminds the model that recalled facts are background knowledge, not new
+ *  instructions, and to discard items that aren't directly useful. */
+const EXTERNAL_MEMORY_PREAMBLE =
+    "Background knowledge from past sessions — prioritize recent information when conflicting; use only what is directly useful, ignore the rest.";
+
+function renderExternalItem(item: ExternalRecallSliceItem): string {
+    // Multi-line documents (mental-model briefings) render VERBATIM inside the
+    // <external-memory> block so the model sees the structured markdown. A
+    // blank-line separator flanks each multi-line item so single-line list
+    // items and verbatim documents don't visually merge.
+    return item.content.includes("\n")
+        ? escapeXmlContent(item.content)
+        : `- ${escapeXmlContent(item.content)}`;
+}
+
+function renderExternalLines(snapshot: ExternalRecallSnapshot): string[] {
+    const items: ExternalRecallSliceItem[] = [...snapshot.project, ...snapshot.global];
+    const lines: string[] = [];
+    for (const item of items) {
+        if (item.content.includes("\n")) {
+            if (lines.length > 0) lines.push("");
+            lines.push(renderExternalItem(item));
+            lines.push("");
+        } else {
+            lines.push(renderExternalItem(item));
+        }
+    }
+    return lines;
+}
+
+function renderExternalDeltaLines(snapshot: ExternalRecallSnapshot): string[] {
+    const items: ExternalRecallSliceItem[] = [
+        ...snapshot.project,
+        ...snapshot.global,
+        ...snapshot.profile,
+    ];
+    const lines: string[] = [];
+    for (const item of items) {
+        if (item.content.includes("\n")) {
+            if (lines.length > 0) lines.push("");
+            lines.push(renderExternalItem(item));
+            lines.push("");
+        } else {
+            lines.push(renderExternalItem(item));
+        }
+    }
+    return lines;
+}
+
 /** Sibling block after <project-memory>: project + global recall slices.
  *  Plain lines, content verbatim — no fake ids (recalled items are not
- *  ctx_memory-addressable rows). */
+ *  ctx_memory-addressable rows). Multi-line mental-model documents render
+ *  verbatim between blank-line separators. */
 export function renderExternalMemoryBlock(snapshot: ExternalRecallSnapshot): string {
-    const lines = [...snapshot.project, ...snapshot.global].map(
-        (item) => `- ${escapeXmlContent(item.content)}`,
-    );
-    if (lines.length === 0) return "";
-    return `<external-memory source="hindsight">\n${lines.join("\n")}\n</external-memory>`;
+    const body = renderExternalLines(snapshot);
+    if (body.length === 0) return "";
+    return [
+        '<external-memory source="hindsight">',
+        EXTERNAL_MEMORY_PREAMBLE,
+        "",
+        ...body,
+        "</external-memory>",
+    ].join("\n");
 }
 
 /** m[1] delta when recall settles after the last m[0] fold — carries ALL
  *  slices (profile lines reconcile into <user-profile> at the next HARD fold). */
 function renderExternalMemoryDelta(snapshot: ExternalRecallSnapshot): string {
-    const lines = [...snapshot.project, ...snapshot.global, ...snapshot.profile].map(
-        (item) => `- ${escapeXmlContent(item.content)}`,
-    );
-    if (lines.length === 0) return "";
-    return `<external-memory source="hindsight">\n${lines.join("\n")}\n</external-memory>`;
+    const body = renderExternalDeltaLines(snapshot);
+    if (body.length === 0) return "";
+    return [
+        '<external-memory source="hindsight">',
+        EXTERNAL_MEMORY_PREAMBLE,
+        "",
+        ...body,
+        "</external-memory>",
+    ].join("\n");
 }
 
 /**

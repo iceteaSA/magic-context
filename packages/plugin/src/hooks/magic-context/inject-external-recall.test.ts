@@ -433,4 +433,39 @@ describe("external recall in m[0]/m[1]", () => {
         expect(projectMemoryIdx).toBeGreaterThanOrEqual(0);
         expect(externalIdx).toBeGreaterThan(projectMemoryIdx);
     });
+
+    test("external block carries preamble and renders multi-line items verbatim", () => {
+        db = makeDb();
+        const projectDirectory = makeProjectDir();
+        seedRecallSnapshot(db, SESSION_ID, {
+            project: [{ content: "Doc line 1\nDoc line 2" }, { content: "single fact" }],
+            profile: [],
+            global: [],
+        });
+        const result = materializeM0({
+            ...buildOptions(),
+            projectDirectory,
+        });
+        // Preamble appears as the first content line of the block.
+        expect(result.m0Text).toContain("Background knowledge from past sessions");
+        // Multi-line item renders VERBATIM, with blank-line separators around it.
+        expect(result.m0Text).toContain("Doc line 1\nDoc line 2");
+        // Single-line items keep the "- " list prefix.
+        expect(result.m0Text).toContain("- single fact");
+    });
+
+    test("external block is omitted when all recalled items are empty", () => {
+        db = makeDb();
+        const projectDirectory = makeProjectDir();
+        seedRecallSnapshot(db, SESSION_ID, {
+            project: [],
+            profile: [],
+            global: [],
+        });
+        const result = materializeM0({
+            ...buildOptions(),
+            projectDirectory,
+        });
+        expect(result.m0Text).not.toContain("<external-memory");
+    });
 });

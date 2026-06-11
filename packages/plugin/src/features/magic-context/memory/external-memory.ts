@@ -7,6 +7,7 @@ import { log } from "../../../shared/logger";
 import { HindsightMemoryBackend } from "./external-memory-hindsight";
 import type {
     ExternalMemoryBackend,
+    ExternalMemoryMentalModelQuery,
     ExternalMemoryRecallQuery,
     ExternalMemoryRecallResult,
     ExternalMemoryRemoveItem,
@@ -132,6 +133,26 @@ export async function removeFromExternalBackend(items: ExternalMemoryRemoveItem[
         }
     } catch (error) {
         log("[magic-context] external memory remove failed:", error);
+    }
+}
+
+/**
+ * Mental-model fast path (single GET vs full recall). UNGATED by
+ * retain_sources. Never throws; [] when off/unsupported/failing.
+ */
+export async function mentalModelsFromExternalBackend(
+    query: ExternalMemoryMentalModelQuery,
+    signal?: AbortSignal,
+): Promise<ExternalMemoryRecallResult[]> {
+    try {
+        if (externalConfig.provider === "off") return [];
+        const current = getOrCreateBackend();
+        if (!current?.mentalModels) return [];
+        if (!(await current.initialize())) return [];
+        return await current.mentalModels(query, signal);
+    } catch (error) {
+        log("[magic-context] external memory mental-models failed:", error);
+        return [];
     }
 }
 

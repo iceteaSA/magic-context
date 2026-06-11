@@ -262,6 +262,65 @@ describe("startSessionRecall", () => {
         expect(snapshot.project.length).toBeGreaterThan(0);
         expect(snapshot.project.length).toBeLessThan(50);
     });
+
+    test("mental models replace project slice when available", async () => {
+        const recallCalls: ExternalMemoryRecallQuery[] = [];
+        _setTestExternalBackendFactory(() => ({
+            ...recallBackend({ project: [{ content: "recall fallback" }] }, recallCalls),
+            mentalModels: async (query) =>
+                query.scope === "project"
+                    ? [{ content: "MM doc\nline 2", category: "project-conventions" }]
+                    : [],
+        }));
+        initializeExternalMemory({
+            ...HINDSIGHT_TEST_CONFIG,
+            recall: { ...HINDSIGHT_TEST_CONFIG.recall, mental_models: true },
+        });
+        startSessionRecall({ db: db!, ...ARGS });
+        await waitForSessionRecall(ARGS.sessionId, 5000);
+        expect(readExternalRecallSnapshot(db!, ARGS.sessionId).snapshot?.project).toEqual([
+            { content: "MM doc\nline 2", category: "project-conventions" },
+        ]);
+        // project recall is short-circuited → no project recall POST
+        expect(recallCalls.some((q) => q.scope === "project")).toBe(false);
+    });
+
+    test("empty mental models fall back to recall", async () => {
+        _setTestExternalBackendFactory(() => ({
+            ...recallBackend({ project: [{ content: "recall fallback" }] }),
+            mentalModels: async () => [],
+        }));
+        initializeExternalMemory({
+            ...HINDSIGHT_TEST_CONFIG,
+            recall: { ...HINDSIGHT_TEST_CONFIG.recall, mental_models: true },
+        });
+        startSessionRecall({ db: db!, ...ARGS });
+        await waitForSessionRecall(ARGS.sessionId, 5000);
+        expect(readExternalRecallSnapshot(db!, ARGS.sessionId).snapshot?.project).toEqual([
+            { content: "recall fallback" },
+        ]);
+    });
+
+    test("mental_models false skips fast path and always uses recall", async () => {
+        let mentalModelsCalled = false;
+        _setTestExternalBackendFactory(() => ({
+            ...recallBackend({ project: [{ content: "recall only" }] }),
+            mentalModels: async () => {
+                mentalModelsCalled = true;
+                return [{ content: "should not be used" }];
+            },
+        }));
+        initializeExternalMemory({
+            ...HINDSIGHT_TEST_CONFIG,
+            recall: { ...HINDSIGHT_TEST_CONFIG.recall, mental_models: false },
+        });
+        startSessionRecall({ db: db!, ...ARGS });
+        await waitForSessionRecall(ARGS.sessionId, 5000);
+        expect(readExternalRecallSnapshot(db!, ARGS.sessionId).snapshot?.project).toEqual([
+            { content: "recall only" },
+        ]);
+        expect(mentalModelsCalled).toBe(false);
+    });
 });
 
 describe("maybeAwaitExternalRecall", () => {

@@ -5,7 +5,15 @@ import { embedBatchForProject } from "../project-embedding-registry";
 import { getActiveUserMemories } from "../user-memory/storage-user-memory";
 import { cosineSimilarity } from "./cosine-similarity";
 import { getProjectEmbeddings } from "./embedding-cache";
-import { getExternalRecallConfig, recallFromExternalBackend } from "./external-memory";
+import {
+    getExternalRecallConfig,
+    mentalModelsFromExternalBackend,
+    recallFromExternalBackend,
+} from "./external-memory";
+import type {
+    ExternalMemoryMentalModelQuery,
+    ExternalMemoryRecallResult,
+} from "./external-memory-provider";
 import {
     computeRecallSnapshotHash,
     type ExternalRecallSliceItem,
@@ -99,23 +107,47 @@ export async function maybeAwaitExternalRecall(args: {
     await waitForSessionRecall(args.sessionId, config.timeout_ms);
 }
 
+async function sliceWithMentalModelFastPath(
+    config: { mental_models: boolean },
+    query: ExternalMemoryMentalModelQuery,
+    recallFallback: () => Promise<ExternalMemoryRecallResult[]>,
+): Promise<ExternalMemoryRecallResult[]> {
+    if (config.mental_models) {
+        const models = await mentalModelsFromExternalBackend(query);
+        if (models.length > 0) return models;
+    }
+    return recallFallback();
+}
+
 async function runSessionRecall(
     args: { db: Database; sessionId: string; projectIdentity: string; projectName: string },
     config: NonNullable<ReturnType<typeof getExternalRecallConfig>>,
 ): Promise<void> {
     const [project, profile, global] = await Promise.all([
-        recallFromExternalBackend({
-            query: `project rules, architecture decisions, configuration, constraints, conventions for ${args.projectName}`,
-            scope: "project",
-            projectIdentity: args.projectIdentity,
-            projectName: args.projectName,
-            maxTokens: config.max_tokens,
-        }),
-        recallFromExternalBackend({
-            query: "user preferences, working style, communication habits",
-            scope: "user",
-            maxTokens: config.max_tokens,
-        }),
+        sliceWithMentalModelFastPath(
+            config,
+            {
+                scope: "project",
+                projectIdentity: args.projectIdentity,
+                projectName: args.projectName,
+            },
+            () =>
+                recallFromExternalBackend({
+                    query: `project rules, architecture decisions, configuration, constraints, conventions for ${args.projectName}`,
+                    scope: "project",
+                    projectIdentity: args.projectIdentity,
+                    projectName: args.projectName,
+                    maxTokens: config.max_tokens,
+                }),
+        ),
+        sliceWithMentalModelFastPath(config, { scope: "user" }, () =>
+            recallFromExternalBackend({
+                query: "user preferences, working style, communication habits",
+                scope: "user",
+                maxTokens: config.max_tokens,
+            }),
+        ),
+        // Global slice always uses full recall — no fast path.
         recallFromExternalBackend({
             query: `infrastructure, environment, tooling, gotchas, and conventions relevant to working on ${args.projectName}`,
             scope: "global",

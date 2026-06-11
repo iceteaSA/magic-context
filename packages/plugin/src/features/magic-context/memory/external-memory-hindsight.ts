@@ -3,6 +3,7 @@ import { log } from "../../../shared/logger";
 import { blockedEmbeddingEndpointReason } from "./embedding-ssrf";
 import type {
     ExternalMemoryBackend,
+    ExternalMemoryMentalModelQuery,
     ExternalMemoryRecallQuery,
     ExternalMemoryRecallResult,
     ExternalMemoryRemoveItem,
@@ -30,6 +31,34 @@ const PROJECT_BANK_MISSION =
     "conventions extracted from coding sessions. Facts are pre-deduplicated and pre-curated; " +
     "extract them faithfully without speculation.";
 
+// Project-scoped mental models seeded once per project bank (after the first
+// successful retain). Source queries are REFLECT prompts — Hindsight runs them
+// on each refresh to keep the document current. mode "delta" preserves stable
+// prose; refresh_after_consolidation re-runs after each ingest cycle.
+const PROJECT_MENTAL_MODELS: ReadonlyArray<{
+    name: string;
+    maxTokens: number;
+    sourceQuery: string;
+}> = [
+    {
+        name: "project-conventions",
+        maxTokens: 800,
+        sourceQuery:
+            "Project conventions and rules — naming, structure, configuration, " +
+            "constraints, and tooling choices extracted from recent coding sessions. " +
+            "Surface only items that recur across multiple sessions or are explicitly " +
+            "asserted by the user.",
+    },
+    {
+        name: "project-decisions",
+        maxTokens: 800,
+        sourceQuery:
+            "Key architectural and design decisions for this project — what was chosen, " +
+            "what was rejected, and the rationale. Focus on durable choices that affect " +
+            "future work; ignore one-off trade-offs.",
+    },
+];
+
 function sanitizeBankSegment(value: string): string {
     return (
         value
@@ -49,8 +78,11 @@ export class HindsightMemoryBackend implements ExternalMemoryBackend {
     private readonly mainBank: string;
     private readonly staticTags: readonly string[];
     private readonly recallGlobalTags: readonly string[];
+    private readonly mentalModelsEnabled: boolean;
+    private readonly profileMentalModelNames: Set<string>;
     private initialized = false;
     private readonly ensuredBanks = new Set<string>();
+    private readonly seededMentalModelBanks = new Set<string>();
 
     // Circuit breaker state — copied from OpenAICompatibleEmbeddingProvider.
     private failureTimes: number[] = [];
@@ -65,6 +97,12 @@ export class HindsightMemoryBackend implements ExternalMemoryBackend {
         this.mainBank = config.main_bank;
         this.staticTags = config.tags;
         this.recallGlobalTags = config.recall?.global_tags ?? [];
+        this.mentalModelsEnabled = config.recall?.mental_models ?? true;
+        this.profileMentalModelNames = new Set(
+            (config.recall?.profile_mental_models ?? ["user-preferences"]).map((n) =>
+                n.toLowerCase(),
+            ),
+        );
         this.backendId = `hindsight:${this.endpoint}:${this.mainBank}:${this.projectBankTemplate}`;
     }
 
@@ -154,7 +192,15 @@ export class HindsightMemoryBackend implements ExternalMemoryBackend {
             try {
                 if (!(await this.ensureBank(bank, signal))) continue;
                 const ok = await this.postRetain(bank, group, signal);
-                if (ok) accepted += group.length;
+                if (ok) {
+                    accepted += group.length;
+                    // Seed missing project-bank mental models after a successful
+                    // retain. The MAIN bank is NEVER seeded — those MMs are
+                    // user-curated and the plugin must not modify them.
+                    if (bank !== this.mainBank) {
+                        void this.ensureProjectMentalModels(bank, group[0]);
+                    }
+                }
             } catch (error) {
                 log(`[magic-context] hindsight retain failed for bank ${bank}:`, error);
             }
@@ -245,6 +291,139 @@ export class HindsightMemoryBackend implements ExternalMemoryBackend {
             }
         }
         return removed;
+    }
+
+    async mentalModels(
+        query: ExternalMemoryMentalModelQuery,
+        signal?: AbortSignal,
+    ): Promise<ExternalMemoryRecallResult[]> {
+        if (!this.mentalModelsEnabled) return [];
+        try {
+            if (!(await this.initialize())) return [];
+            if (query.scope === "project" && !query.projectIdentity) {
+                log(
+                    "[magic-context] hindsight mental-models: project scope without identity — skipping",
+                );
+                return [];
+            }
+            const bank = this.resolveBankForScope(
+                query.scope,
+                query.projectIdentity,
+                query.projectName,
+            );
+            const response = await this.request(
+                "GET",
+                `/v1/default/banks/${encodeURIComponent(bank)}/mental-models?detail=content`,
+                undefined,
+                signal,
+                { benign404: true },
+            );
+            if (!response) return [];
+            if (response.status === 404) return []; // bank missing → no MMs
+            const body = (await response.json().catch(() => null)) as {
+                items?: unknown;
+            } | null;
+            const rawItems = Array.isArray(body?.items) ? body.items : [];
+            const results: ExternalMemoryRecallResult[] = [];
+            for (const raw of rawItems) {
+                if (!raw || typeof raw !== "object") continue;
+                const model = raw as {
+                    name?: unknown;
+                    content?: unknown;
+                };
+                if (typeof model.name !== "string" || model.name.length === 0) continue;
+                if (typeof model.content !== "string") continue; // null/unpopulated
+                const trimmed = model.content.trim();
+                if (trimmed.length === 0) continue;
+                // For non-project scopes, gate by the configured profile names
+                // (case-insensitive). Project scope returns everything non-empty.
+                if (query.scope !== "project") {
+                    if (!this.profileMentalModelNames.has(model.name.toLowerCase())) continue;
+                }
+                results.push({ content: trimmed, category: model.name });
+            }
+            return results;
+        } catch (error) {
+            log("[magic-context] hindsight mental-models failed:", error);
+            return [];
+        }
+    }
+
+    async fetchFailedRetainCount(signal?: AbortSignal): Promise<number | null> {
+        try {
+            if (!(await this.initialize())) return null;
+            const response = await this.request(
+                "GET",
+                `/v1/default/banks/${encodeURIComponent(this.mainBank)}/operations?type=retain&status=failed&exclude_parents=true&limit=5`,
+                undefined,
+                signal,
+            );
+            if (!response) return null;
+            const body = (await response.json().catch(() => null)) as {
+                operations?: unknown;
+                total?: unknown;
+            } | null;
+            if (!body) return null;
+            if (typeof body.total === "number") return body.total;
+            return Array.isArray(body.operations) ? body.operations.length : null;
+        } catch {
+            return null;
+        }
+    }
+
+    /** Seed missing project-bank mental models (idempotent, fire-and-forget).
+     *  Called after the first successful retain to a non-main bank. Seeding
+     *  pre-existing project banks with a `project:X` MM would create a permanent
+     *  empty document (the reflect loop sees no memories tagged for that
+     *  project until the first retain), so we always seed AFTER retain — and
+     *  gate on a per-bank claim so transient failures don't retry forever. */
+    private async ensureProjectMentalModels(
+        bank: string,
+        sample: ExternalMemoryRetainItem,
+    ): Promise<void> {
+        if (!this.mentalModelsEnabled) return;
+        if (this.seededMentalModelBanks.has(bank)) return;
+        this.seededMentalModelBanks.add(bank); // claim first; transient failures retry next process
+        try {
+            const listResponse = await this.request(
+                "GET",
+                `/v1/default/banks/${encodeURIComponent(bank)}/mental-models`,
+                undefined,
+                undefined,
+                { benign404: true },
+            );
+            if (!listResponse) return;
+            const body = (await listResponse.json().catch(() => null)) as {
+                items?: unknown;
+            } | null;
+            const existing = new Set<string>();
+            for (const raw of Array.isArray(body?.items) ? body.items : []) {
+                if (!raw || typeof raw !== "object") continue;
+                const name = (raw as { name?: unknown }).name;
+                if (typeof name === "string" && name.length > 0) {
+                    existing.add(name.toLowerCase());
+                }
+            }
+            const projectTag = sample.projectIdentity
+                ? `project:${sample.projectIdentity}`
+                : "project:unknown";
+            for (const model of PROJECT_MENTAL_MODELS) {
+                if (existing.has(model.name)) continue;
+                await this.request(
+                    "POST",
+                    `/v1/default/banks/${encodeURIComponent(bank)}/mental-models`,
+                    {
+                        name: model.name,
+                        source_query: model.sourceQuery,
+                        tags: [projectTag],
+                        max_tokens: model.maxTokens,
+                        trigger: { mode: "delta", refresh_after_consolidation: true },
+                    },
+                );
+            }
+        } catch (error) {
+            log(`[magic-context] mental-model seeding failed for bank ${bank}:`, error);
+        }
     }
 
     private async ensureBank(bank: string, signal?: AbortSignal): Promise<boolean> {
