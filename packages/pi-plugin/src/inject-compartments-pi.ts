@@ -34,6 +34,13 @@ import type { Memory } from "@magic-context/core/features/magic-context/memory/t
 import { resolveMuralWire } from "@magic-context/core/features/magic-context/mural/render-trigger";
 import type { MuralWireOptions } from "@magic-context/core/features/magic-context/mural/resolve-mural";
 import {
+	computeRecallSnapshotHash,
+	type ExternalRecallSnapshot,
+	readExternalRecallHash,
+	readExternalRecallSnapshot,
+} from "@magic-context/core/features/magic-context/memory/external-recall-read";
+import { renderExternalMemoryBlock } from "@magic-context/core/hooks/magic-context/inject-compartments";
+import {
 	type ContextDatabase,
 	clearCachedM0M1,
 	escapeXmlContent,
@@ -324,6 +331,8 @@ interface FrozenM0Inputs {
 	memories: Memory[];
 	userProfile: UserMemory[];
 	workspace: WorkspaceRenderContext;
+	/** External recall snapshot baked into m[0], or null when none/pending. */
+	externalRecall: ExternalRecallSnapshot | null;
 }
 
 /**
@@ -508,6 +517,11 @@ export interface PiM0SnapshotMarkers {
 	projectIdentity: string | null;
 	muralEnabled: boolean;
 	renderBudgetIdentity: string;
+	/** Hash of the persisted external-recall snapshot baked into m[0] ('' = none).
+	 *  NOT a HARD bust trigger (external recall is not a materialization driver) —
+	 *  drives the m[1] <external-memory> delta comparison only. Mirrors OpenCode
+	 *  M0SnapshotMarkers.externalRecallHash. */
+	externalRecallHash: string;
 }
 
 /**
@@ -858,6 +872,7 @@ function getCachedMarkers(
 		projectIdentity: meta.cachedM0ProjectIdentity ?? null,
 		muralEnabled: cachedUpgradeIdentity.muralEnabled ?? false,
 		renderBudgetIdentity: cachedUpgradeIdentity.renderBudgetIdentity ?? "",
+		externalRecallHash: meta.cachedM0ExternalRecallHash ?? "",
 	};
 }
 
@@ -952,6 +967,11 @@ function readCurrentMarkersFromCompartments(
 		projectIdentity: state.projectIdentity,
 		muralEnabled: state.muralEnabled === true,
 		renderBudgetIdentity: renderBudgetIdentityPi(state),
+		// externalRecallHash is NOT a mustMaterializePi trigger — it rides the
+		// m[1] external delta only. Mirrors OpenCode M0SnapshotMarkers comment.
+		// Read the live hash here for marker capture; materializeM0Pi overrides
+		// it from the in-transaction read (TOCTOU-safe, same as projectDocsHash).
+		externalRecallHash: readExternalRecallHash(db, state.sessionId),
 	};
 }
 
@@ -1149,12 +1169,18 @@ function renderUserProfileBlock(
 	db: ContextDatabase,
 	wrapper = "user-profile",
 	memoriesOverride?: UserMemory[],
+	externalProfileLines: readonly { content: string }[] = [],
 ): string {
 	const memories = memoriesOverride ?? safeGetActiveUserMemoriesPi(db);
-	if (memories.length === 0) return "";
-	return `<${wrapper}>\n${memories
-		.map((memory) => `- ${escapeXmlContent(memory.content)}`)
-		.join("\n")}\n</${wrapper}>`;
+	const localLines = memories.map(
+		(memory) => `- ${escapeXmlContent(memory.content)}`,
+	);
+	const externalLines = externalProfileLines.map(
+		(item) => `- ${escapeXmlContent(item.content)}`,
+	);
+	const allLines = [...localLines, ...externalLines];
+	if (allLines.length === 0) return "";
+	return `<${wrapper}>\n${allLines.join("\n")}\n</${wrapper}>`;
 }
 
 export function renderM0Pi(
@@ -1174,6 +1200,8 @@ export function renderM0Pi(
 	/** Optional mural wire options (HARD fold only). When vision-capable, emits
 	 *  the `<memory-mural>` marker block; the PNG rides as a separate image part. */
 	mural?: { enabled: boolean; supportsVision: boolean; dataUrl?: string },
+	/** External recall snapshot to bake into m[0]. Null = no external block. */
+	externalRecallOverride?: ExternalRecallSnapshot | null,
 ): string {
 	const memPath = memoryProjectPath(state);
 	const workspace =
@@ -1262,10 +1290,13 @@ export function renderM0Pi(
 		userProfileOverride ?? safeGetActiveUserMemoriesPi(db),
 		state.userProfileBudgetTokens ?? DEFAULT_USER_PROFILE_BUDGET_TOKENS,
 	);
+	// Merge external profile slice into <user-profile> (mirrors OpenCode renderM0:
+	// renderUserProfileBlock(trimmedProfile, "user-profile", externalRecall?.profile ?? [])).
 	const userProfile = renderUserProfileBlock(
 		db,
 		"user-profile",
 		trimmedProfile,
+		externalRecallOverride?.profile ?? [],
 	);
 	if (userProfile.length > 0) sections.push(userProfile);
 	if (!state.compactionOff) {
@@ -1281,6 +1312,11 @@ export function renderM0Pi(
 		sections.push(
 			"<memory-mural>\nThe project memory mural image follows.\n</memory-mural>",
 		);
+	}
+	// Render external memory block after <project-memory> (mirrors OpenCode renderM0).
+	if (externalRecallOverride) {
+		const externalBlock = renderExternalMemoryBlock(externalRecallOverride);
+		if (externalBlock) sections.push(externalBlock);
 	}
 	return sections.join("\n\n").trim();
 }
@@ -1380,6 +1416,13 @@ function readFrozenM0InputsPi(
 		const userProfile = safeGetActiveUserMemoriesPi(db);
 		const projectState = memPath ? getProjectState(db, memPath) : undefined;
 		const globalState = getProjectState(db, GLOBAL_USER_PROFILE_PROJECT_PATH);
+		// In-transaction read of the persisted external recall snapshot. Overrides
+		// the externalRecallHash set in readCurrentMarkersFromCompartments so render
+		// and marker derive from the SAME read (no TOCTOU) — mirrors how
+		// projectDocsHash is overwritten from readProjectDocsCanonical in OpenCode.
+		const recallRead = readExternalRecallSnapshot(db, state.sessionId);
+		const externalRecall =
+			recallRead.state === "done" ? recallRead.snapshot : null;
 		const markers: PiM0SnapshotMarkers = {
 			maxCompartmentSeq: compartments.reduce(
 				(max, compartment) =>
@@ -1425,8 +1468,17 @@ function readFrozenM0InputsPi(
 			projectIdentity: state.projectIdentity,
 			muralEnabled: state.muralEnabled === true,
 			renderBudgetIdentity: renderBudgetIdentityPi(state),
+			externalRecallHash: computeRecallSnapshotHash(externalRecall),
 		};
-		return { docs, markers, compartments, memories, userProfile, workspace };
+		return {
+			docs,
+			markers,
+			compartments,
+			memories,
+			userProfile,
+			workspace,
+			externalRecall,
+		};
 	});
 	return read();
 }
@@ -1471,6 +1523,7 @@ function renderFreshM0PiNonPersisted(
 		frozen.userProfile,
 		frozen.workspace,
 		mural,
+		frozen.externalRecall,
 	);
 	let attempts = 0;
 	while (
@@ -1489,6 +1542,7 @@ function renderFreshM0PiNonPersisted(
 			frozen.userProfile,
 			frozen.workspace,
 			mural,
+			frozen.externalRecall,
 		);
 		attempts += 1;
 	}
@@ -1548,6 +1602,7 @@ export function materializeM0Pi(
 	// rendered m[0] exceeds the history budget, escalate the decay pressure and
 	// re-render up to 3x so tight budgets demote more aggressively. Without this,
 	// Pi would select different (looser) tiers than OpenCode under budget pressure.
+	const snapshotExternalRecall = frozen.externalRecall;
 	let decayPressureMultiplier = 1;
 	let m0 = renderM0Pi(
 		state,
@@ -1559,6 +1614,7 @@ export function materializeM0Pi(
 		snapshotUserProfile,
 		frozen.workspace,
 		mural,
+		snapshotExternalRecall,
 	);
 	const historyBudget =
 		state.historyBudgetTokens ?? DEFAULT_HISTORY_BUDGET_TOKENS;
@@ -1579,6 +1635,7 @@ export function materializeM0Pi(
 			snapshotUserProfile,
 			frozen.workspace,
 			mural,
+			snapshotExternalRecall,
 		);
 		attempts += 1;
 	}
@@ -1661,6 +1718,10 @@ export function materializeM0Pi(
 			systemHash: snapshotMarkers.systemHash,
 			modelKey: snapshotMarkers.modelKey,
 			projectIdentity: snapshotMarkers.projectIdentity,
+			// Persist the external recall hash so the next pass can compare it
+			// against the live hash for the m[1] delta check. NOT a hard-bust
+			// trigger — rides the m[1] external delta only.
+			externalRecallHash: snapshotMarkers.externalRecallHash,
 		});
 		// Persist the rendered-memory identity in the SAME transaction as the m[0]
 		// snapshot (parity with OpenCode materializeM0). `memory_block_ids` /
@@ -1943,6 +2004,19 @@ function renderM1PiWithMetadata(
 		if (profileBlock) sections.push(profileBlock);
 	}
 
+	// External memory delta: when the live recall hash differs from the m[0]
+	// baseline hash, surface the current recall snapshot as a delta. Mirrors
+	// OpenCode renderM1's renderExternalMemoryDelta path. The delta carries ALL
+	// slices (profile lines reconcile into <user-profile> at the next HARD fold).
+	const liveExternalRecallHash = readExternalRecallHash(db, state.sessionId);
+	if (liveExternalRecallHash !== markers.externalRecallHash) {
+		const recallRead = readExternalRecallSnapshot(db, state.sessionId);
+		if (recallRead.state === "done" && recallRead.snapshot) {
+			const externalBlock = renderExternalMemoryBlock(recallRead.snapshot);
+			if (externalBlock) sections.push(externalBlock);
+		}
+	}
+
 	if (sections.length === 0) {
 		return {
 			text: PI_M1_PLACEHOLDER,
@@ -1987,6 +2061,7 @@ interface CachedPiM0M1Row {
 	cached_m0_system_hash: string | null;
 	cached_m0_model_key: string | null;
 	cached_m0_project_identity: string | null;
+	cached_m0_external_recall_hash: string | null;
 	cached_m0_last_baseline_end_message_id: string | null;
 	memory_block_ids: string | null;
 }
@@ -2038,6 +2113,7 @@ function readCachedPiM0M1Row(
 					cached_m0_system_hash,
 					cached_m0_model_key,
 					cached_m0_project_identity,
+					cached_m0_external_recall_hash,
 					cached_m0_last_baseline_end_message_id,
 					memory_block_ids
 			   FROM session_meta
@@ -2089,6 +2165,7 @@ function markersFromCachedPiRow(
 		projectIdentity: row.cached_m0_project_identity ?? null,
 		muralEnabled: cachedUpgradeIdentity.muralEnabled ?? false,
 		renderBudgetIdentity: cachedUpgradeIdentity.renderBudgetIdentity ?? "",
+		externalRecallHash: row.cached_m0_external_recall_hash ?? "",
 	};
 }
 
