@@ -709,7 +709,12 @@ export function createMagicContextCommandHandler(deps: {
                 }
                 const liveModelKey = deps.getLiveModelKey?.(sessionId);
                 const liveContextLimit = deps.getContextLimit?.(sessionId);
-                const statusOutput = executeStatus(
+                // Use dreamer's directory when available (== project's working
+                // directory for dreamer-aware sessions); fall back to cwd so
+                // the new "Skill memory" section can resolve a project identity
+                // for sessions that don't have dreamer configured.
+                const statusDirectory = deps.dreamer?.directory ?? process.cwd();
+                const statusOutput = await executeStatus(
                     deps.db,
                     sessionId,
                     deps.protectedTags,
@@ -719,6 +724,7 @@ export function createMagicContextCommandHandler(deps: {
                     deps.commitClusterTrigger,
                     deps.executeThresholdTokens,
                     liveContextLimit,
+                    statusDirectory,
                 );
                 const moduleStatus = rustStatus ? `\n\n${formatRustStatusText(rustStatus)}` : "";
                 const combinedStatus = `${statusOutput}${moduleStatus}`;

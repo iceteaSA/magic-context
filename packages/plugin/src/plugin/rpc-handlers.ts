@@ -7,6 +7,7 @@ import { getMostRecentTaskRunAt } from "../features/magic-context/dreamer/storag
 import { resolveProjectIdentity } from "../features/magic-context/memory/project-identity";
 import { getMural } from "../features/magic-context/mural/storage-mural";
 import { getEmbeddingCoverageStatus } from "../features/magic-context/project-embedding-registry";
+import { getSkillMemoryStats } from "../features/magic-context/skill-memory/storage";
 import {
     type ContextDatabase as Database,
     openDatabase,
@@ -598,7 +599,17 @@ export function buildStatusDetail(
             context_db_schema_version: null as number | null,
             plugin_supported_version: LATEST_SUPPORTED_VERSION,
         },
+        skillMemory: null,
     };
+
+    // Skill-memory stats — scoped to the session's project identity (the
+    // skill_memory table is partitioned on project_identity). base.projectIdentity
+    // is resolved by buildSidebarSnapshot; we re-use it here to avoid a second
+    // resolveProjectIdentity call. Null identity → null stats (status dialog
+    // hides the section). Single SQL aggregate, sync, safe to call every poll.
+    detail.skillMemory = base.projectIdentity
+        ? getSkillMemoryStats(db, base.projectIdentity)
+        : null;
 
     try {
         // Storage-version probe: live DB schema vs this binary's fence. Fills the
