@@ -165,7 +165,7 @@ Three effective modes; the heavier features (historian, nudges, adjunct injectio
 | Channel 2 ceiling nudge (synthetic-user, one-shot) | ✓ | ✗ | ✗ |
 | Deferred-note nudges | ✓ | ✗ | ✗ |
 | Synthetic-todowrite injection | ✓ | ✓ | ✗ |
-| Skill-memory `<skill-memory>` recall append (transparent after-hook) | ✓ | ✓ | ✗ |
+| Skill-memory `<skill-memory>` recall append (transparent after-hook) | ✓ | ✓ | ✓ |
 | Auto-search hint | ✓ | ✓ | ✗ |
 | Heuristic tool drops at execute threshold | ✓ (once per user turn) | ✓ (once per user turn) | ✓ (every execute pass — no once-per-turn guard) |
 | Heuristic reasoning clearing | ✓ | ✓ | ✓ |
@@ -331,6 +331,8 @@ Subagents run heuristic drops on every execute pass (no once-per-turn guard) bec
 ## Error handling
 
 Fail **closed** when storage is unavailable (better to disable than silently overflow the prompt). Fail **open** in per-turn handlers (log and skip). Wrap the outer transform so transient `SQLITE_BUSY`/`SQLITE_LOCKED` never crash the prompt loop (#23). `overflow-detection.ts` parses provider context-overflow errors (Anthropic / OpenAI / Copilot) and persists the detected limit so later passes use the lower value. Subagent model fallback (`model-suggestion-retry.ts`) iterates the chain on retryable failures; abort/timeout/context-overflow short-circuit. Hidden agents carry a `steps`/`maxSteps` cap and are aborted via `session.abort` on timeout so a weak local model can't loop forever (#154).
+
+**Subagent rationale:** subagents are driven by a parent agent, have bounded lifetimes, and often run in parallel (council, historian, sidekick, dreamer child sessions). They still benefit from automatic heuristic drops on their own context at execute passes (running on EVERY execute pass, not once-per-turn — long-running subagents are effectively one parent turn, and they'd starve under the parent's once-per-turn gate), but turning on historian, nudges, or prompt-adjunct injections in each subagent would create redundant work and per-agent cache churn. Subagents that run into overflow fall back to the existing `overflow-detection.ts` path; the detected limit is recorded so future passes use the lower value, but no emergency-recovery flag is persisted because subagents don't consume that path. The skill-memory `<skill-memory>` recall append is the one exception that IS active for subagents: it rides the same ungated `tool.execute.after` path as the Channel-1 nudge (it is a tool-result append, NOT a prompt-adjunct injection), so an implementer subagent that loads a skill benefits from that skill's accumulated gotchas — the append lands in the subagent's own tool result (cache-safe in its context) at the cost of a single DB read.
 
 ## Tag identity
 
