@@ -1864,33 +1864,6 @@ describe("injectM0M1Pi m[1]-rendered coverage watermark (marker-drain liveness)"
 		const cwd = mkdtempSync(join(tmpdir(), "pi-m1-coverage-"));
 		try {
 			const state = piState("ses-pi-m1-coverage", cwd);
-describe("Pi external m[1] delta pressure-refold exclusion (cache parity)", () => {
-	// RED-GREEN regression for Finding #1: a large external-recall delta in m[1]
-	// must NEVER trigger the pressure-refold backstop. The fix subtracts
-	// externalDeltaTokens + wrapper overhead from the pressure comparison so
-	// late recall "must NEVER cause a fold" (parity with OpenCode injectM0M1).
-	//
-	// Setup: materialize m[0] with a small compartment (m[0] tokens ≈ small).
-	// Then seed a large external recall snapshot whose token count exceeds
-	// 15% of m[0] tokens. On a cache-busting pass the pressure math must
-	// exclude the external delta and NOT call materializeM0PiWithRetry.
-	//
-	// RED (without fix): m1PressureTokens = m1Tokens (no subtraction) →
-	//   large delta crosses the 15% ratio → materializeM0PiWithRetry called →
-	//   m[0] bytes change → test FAILS.
-	// GREEN (with fix): m1PressureTokens = m1Tokens - externalDeltaTokens -
-	//   wrapper → ratio not crossed → no refold → m[0] bytes unchanged → PASSES.
-
-	it("large external m[1] delta does NOT trigger pressure refold (m[0] bytes stable)", () => {
-		const db = createTestDb();
-		const cwd = mkdtempSync(join(tmpdir(), "pi-ext-pressure-"));
-		try {
-			const state = piState("ses-pi-ext-pressure", cwd);
-
-			// Materialize m[0] with a compartment large enough to clear the
-			// M0_DRIFT_RATIO_FLOOR_TOKENS=500 gate (so the ratio test can fire).
-			// ~600 tokens of body content ensures m[0] > 500 tokens.
-			const m0Body = "word ".repeat(600); // ~600 tokens
 			appendCompartments(db, state.sessionId, [
 				{
 					sequence: 0,
@@ -2114,6 +2087,45 @@ describe("Pi external m[1] delta pressure-refold exclusion (cache parity)", () =
 			expect(result.m1RenderedCoverage).toBeNull();
 		} finally {
 			db.exec = originalExec as typeof db.exec;
+			closeQuietly(db);
+		}
+	});
+});
+
+describe("Pi external m[1] delta pressure-refold exclusion (cache parity)", () => {
+	// RED-GREEN regression for Finding #1: a large external-recall delta in m[1]
+	// must NEVER trigger the pressure-refold backstop. The fix subtracts
+	// externalDeltaTokens + wrapper overhead from the pressure comparison so
+	// late recall "must NEVER cause a fold" (parity with OpenCode injectM0M1).
+	//
+	// Setup: materialize m[0] with a small compartment (m[0] tokens ≈ small).
+	// Then seed a large external recall snapshot whose token count exceeds
+	// 15% of m[0] tokens. On a cache-busting pass the pressure math must
+	// exclude the external delta and NOT call materializeM0PiWithRetry.
+	//
+	// RED (without fix): m1PressureTokens = m1Tokens (no subtraction) →
+	//   large delta crosses the 15% ratio → materializeM0PiWithRetry called →
+	//   m[0] bytes change → test FAILS.
+	// GREEN (with fix): m1PressureTokens = m1Tokens - externalDeltaTokens -
+	//   wrapper → ratio not crossed → no refold → m[0] bytes unchanged → PASSES.
+
+	it("large external m[1] delta does NOT trigger pressure refold (m[0] bytes stable)", () => {
+		const db = createTestDb();
+		const cwd = mkdtempSync(join(tmpdir(), "pi-ext-pressure-"));
+		try {
+			const state = piState("ses-pi-ext-pressure", cwd);
+
+			// Materialize m[0] with a compartment large enough to clear the
+			// M0_DRIFT_RATIO_FLOOR_TOKENS=500 gate (so the ratio test can fire).
+			// ~600 tokens of body content ensures m[0] > 500 tokens.
+			const m0Body = "word ".repeat(600); // ~600 tokens
+			appendCompartments(db, state.sessionId, [
+				{
+					sequence: 0,
+					startMessage: 1,
+					endMessage: 1,
+					startMessageId: "entry-0",
+					endMessageId: "entry-0",
 					title: "Large",
 					content: `U: large turn\n${m0Body}`,
 					p1: `U: large turn\n${m0Body}`,
