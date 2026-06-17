@@ -536,12 +536,14 @@ export async function maybeInjectSkillMemory(
     projectIdentity: string,
     frontmatterConfig: SkillMemoryConfig | null,
     output: { output?: unknown },
+    intent?: string,
 ): Promise<void> {
     if (typeof output.output !== "string" || output.output.length === 0) return;
 
     // Delegate to shared recall core (also used by ctx_skill_recall tool)
     const block = await recallSkillMemoryBlock(db, {
         skill: skillId,
+        intent,
         scope: tier,
         projectIdentity,
         frontmatterConfig,
@@ -573,9 +575,15 @@ export function createToolExecuteAfterHook(args: {
      *  we fall back to `defaultDirectory` (deps.directory). */
     sessionDirectoryBySession: Map<string, string>;
     defaultDirectory: string;
+    intentByCallId: IntentByCallIdMap;
 }) {
     return async (input: unknown, output?: unknown) => {
-        const typedInput = input as { tool?: string; sessionID?: string; args?: unknown };
+        const typedInput = input as {
+            tool?: string;
+            sessionID?: string;
+            callID?: string;
+            args?: unknown;
+        };
         if (!typedInput.sessionID || !typedInput.tool) {
             return;
         }
@@ -647,6 +655,10 @@ export function createToolExecuteAfterHook(args: {
                                 args.sessionDirectoryBySession.get(typedInput.sessionID) ??
                                 args.defaultDirectory;
                             const projectIdentity = resolveProjectIdentity(sessionDir);
+                            const stashed = typedInput.callID
+                                ? (getAndDeleteIntent(args.intentByCallId, typedInput.callID) ??
+                                  undefined)
+                                : undefined;
                             await maybeInjectSkillMemory(
                                 args.db,
                                 skillId,
@@ -654,6 +666,7 @@ export function createToolExecuteAfterHook(args: {
                                 projectIdentity,
                                 registryEntry.frontmatterConfig,
                                 output as { output?: unknown },
+                                stashed,
                             );
                         }
                     } catch (error) {
