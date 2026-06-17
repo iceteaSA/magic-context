@@ -210,7 +210,12 @@ function installLatestAuthorityTriggers(db: Database): void {
     }
 }
 
-const MIGRATIONS: Migration[] = [
+function columnExists(db: Database, table: string, column: string): boolean {
+    const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>;
+    return rows.some((row) => row.name === column);
+}
+
+export const MIGRATIONS: Migration[] = [
     {
         version: 1,
         description: "Merge session_notes + smart_notes into unified notes table",
@@ -2750,6 +2755,59 @@ const MIGRATIONS: Migration[] = [
                 CREATE INDEX IF NOT EXISTS idx_skill_memory_fts_prep
                   ON skill_memory(skill_id, tier, project_identity, kind);
             `);
+        },
+    },
+
+    {
+        // Skill-memory P2: was v39/v43/v55/v71 across earlier rebases; renumbered
+        // across upstream migrations — now v74 after upstream v0.33.1 took
+        // v70-v72 (skill-P1 is v73, skill-P2 v74, skill-P3a v75).
+        version: 74,
+        description:
+            "Skill-memory P2: delta_embedding + recall_count columns + skill_memory_fts FTS5 vtable",
+        up: (db: Database) => {
+            // skill_memory is migration-only (created by v73); ALTER is safe here.
+            if (!columnExists(db, "skill_memory", "delta_embedding")) {
+                db.exec(`ALTER TABLE skill_memory ADD COLUMN delta_embedding BLOB;`);
+            }
+
+            // recall_count: read-side usage counter, bumped each time a note is surfaced
+            // in a recall block (distinct from hit_count, which is write-side re-record salience).
+            // Answers "which notes are recalled most". NOT_NULL+DEFAULT is valid in ALTER ADD COLUMN.
+            if (!columnExists(db, "skill_memory", "recall_count")) {
+                db.exec(
+                    `ALTER TABLE skill_memory ADD COLUMN recall_count INTEGER NOT NULL DEFAULT 0;`,
+                );
+            }
+
+            // FTS5 over (intent, delta), content-linked to skill_memory — mirrors memories_fts.
+            db.exec(`
+                CREATE VIRTUAL TABLE IF NOT EXISTS skill_memory_fts USING fts5(
+                  intent,
+                  delta,
+                  content='skill_memory',
+                  content_rowid='id',
+                  tokenize='porter unicode61'
+                );
+
+                CREATE TRIGGER IF NOT EXISTS skill_memory_ai AFTER INSERT ON skill_memory BEGIN
+                  INSERT INTO skill_memory_fts(rowid, intent, delta) VALUES (new.id, new.intent, new.delta);
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS skill_memory_ad AFTER DELETE ON skill_memory BEGIN
+                  INSERT INTO skill_memory_fts(skill_memory_fts, rowid, intent, delta) VALUES ('delete', old.id, old.intent, old.delta);
+                END;
+
+                CREATE TRIGGER IF NOT EXISTS skill_memory_au AFTER UPDATE ON skill_memory BEGIN
+                  INSERT INTO skill_memory_fts(skill_memory_fts, rowid, intent, delta) VALUES ('delete', old.id, old.intent, old.delta);
+                  INSERT INTO skill_memory_fts(rowid, intent, delta) VALUES (new.id, new.intent, new.delta);
+                END;
+            `);
+
+            // Backfill the FTS index for any existing skill_memory rows. External-content FTS5 tables
+            // expose content rowids immediately, so a `NOT IN (SELECT rowid FROM …_fts)` guard is a no-op;
+            // the 'rebuild' command is the correct way to (re)populate an external-content index.
+            db.exec(`INSERT INTO skill_memory_fts(skill_memory_fts) VALUES('rebuild');`);
         },
     },
 ];
