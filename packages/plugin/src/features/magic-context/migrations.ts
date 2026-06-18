@@ -1636,6 +1636,71 @@ export const MIGRATIONS: Migration[] = [
             db.exec(`INSERT INTO skill_memory_fts(skill_memory_fts) VALUES('rebuild');`);
         },
     },
+    {
+        // Skill-memory historian extraction: was v41 on the standalone skill-memory
+        // branch; renumbered to v44 after upstream v0.26 took v39/40/41 (skill is now v42/43).
+        version: 44,
+        description:
+            "Skill-memory historian extraction: origin_project + source_type columns; unify global-tier notes under project_identity='*' (collision-merge)",
+        up: (db: Database) => {
+            db.transaction(() => {
+                if (!columnExists(db, "skill_memory", "origin_project")) {
+                    db.exec(`ALTER TABLE skill_memory ADD COLUMN origin_project TEXT;`);
+                }
+                if (!columnExists(db, "skill_memory", "source_type")) {
+                    db.exec(`ALTER TABLE skill_memory ADD COLUMN source_type TEXT;`);
+                }
+
+                // resolved_path stays TEXT NOT NULL; historian writes the '' sentinel
+                // (handled in storage layer, not here).
+                const groups = db
+                    .prepare(
+                        `SELECT skill_id, normalized_hash, COUNT(*) AS n, MIN(created_at) AS min_created,
+                                SUM(hit_count) AS sum_hit, SUM(recall_count) AS sum_recall, MAX(last_used_at) AS max_used
+                         FROM skill_memory
+                         WHERE tier='global' AND project_identity != '*'
+                         GROUP BY skill_id, normalized_hash HAVING COUNT(*) > 1`,
+                    )
+                    .all() as Array<{
+                    skill_id: string;
+                    normalized_hash: string;
+                    n: number;
+                    min_created: number;
+                    sum_hit: number;
+                    sum_recall: number;
+                    max_used: number | null;
+                }>;
+                for (const g of groups) {
+                    const survivor = db
+                        .prepare(
+                            `SELECT id, project_identity FROM skill_memory
+                             WHERE skill_id=? AND normalized_hash=? AND tier='global' AND project_identity != '*'
+                             ORDER BY created_at ASC, id ASC LIMIT 1`,
+                        )
+                        .get(g.skill_id, g.normalized_hash) as {
+                        id: number;
+                        project_identity: string;
+                    };
+                    db.prepare(
+                        `DELETE FROM skill_memory WHERE skill_id=? AND normalized_hash=? AND tier='global' AND project_identity != '*' AND id != ?`,
+                    ).run(g.skill_id, g.normalized_hash, survivor.id);
+                    db.prepare(
+                        `UPDATE skill_memory SET hit_count=?, recall_count=?, last_used_at=?, origin_project=?, project_identity='*' WHERE id=?`,
+                    ).run(g.sum_hit, g.sum_recall, g.max_used, survivor.project_identity, survivor.id);
+                }
+
+                db.prepare(
+                    `DELETE FROM skill_memory AS s
+                     WHERE s.tier='global' AND s.project_identity != '*'
+                       AND EXISTS (SELECT 1 FROM skill_memory g WHERE g.tier='global' AND g.project_identity='*' AND g.skill_id=s.skill_id AND g.normalized_hash=s.normalized_hash)`,
+                ).run();
+
+                db.prepare(
+                    `UPDATE skill_memory SET origin_project = project_identity, project_identity = '*' WHERE tier='global' AND project_identity != '*'`,
+                ).run();
+            })();
+        },
+    },
 ];
 
 /**
