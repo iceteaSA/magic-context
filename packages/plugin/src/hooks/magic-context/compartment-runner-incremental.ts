@@ -23,6 +23,7 @@ import {
 } from "../../features/magic-context/memory";
 import { resolveProjectIdentity } from "../../features/magic-context/memory/project-identity";
 import { getMemoriesByProject } from "../../features/magic-context/memory/storage-memory";
+import { promoteSkillObservations } from "../../features/magic-context/skill-memory/promote";
 import {
     clearEmergencyDrainLatch,
     clearEmergencyRecovery,
@@ -812,6 +813,24 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
                 );
             } catch (error) {
                 sessionLog(sessionId, "failed to store user memory candidates:", error);
+            }
+        }
+
+        if (
+            promotionActive &&
+            !discardedLast &&
+            validatedPass.skillObservations &&
+            validatedPass.skillObservations.length > 0
+        ) {
+            try {
+                const written = promoteSkillObservations(
+                    db,
+                    resolveProjectIdentity(promotionDirectory),
+                    validatedPass.skillObservations,
+                );
+                sessionLog(sessionId, `promoted ${written} skill observation(s)`);
+            } catch (error) {
+                sessionLog(sessionId, "failed to promote skill observations:", error);
             }
         }
     } catch (error: unknown) {
