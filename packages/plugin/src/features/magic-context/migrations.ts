@@ -1686,7 +1686,13 @@ export const MIGRATIONS: Migration[] = [
                     ).run(g.skill_id, g.normalized_hash, survivor.id);
                     db.prepare(
                         `UPDATE skill_memory SET hit_count=?, recall_count=?, last_used_at=?, origin_project=?, project_identity='*' WHERE id=?`,
-                    ).run(g.sum_hit, g.sum_recall, g.max_used, survivor.project_identity, survivor.id);
+                    ).run(
+                        g.sum_hit,
+                        g.sum_recall,
+                        g.max_used,
+                        survivor.project_identity,
+                        survivor.id,
+                    );
                 }
 
                 // Defensive (S4): drop any pre-'*' row whose (skill_id, normalized_hash)

@@ -210,7 +210,11 @@ export function parseCompartmentOutput(text: string): ParsedCompartmentOutput {
             const kind = itemMatch[2].trim();
             const lesson = unescapeXml(itemMatch[3].trim());
             if (skillId && lesson && SKILL_OBS_KINDS.has(kind)) {
-                skillObservations.push({ skillId, kind: kind as ParsedSkillObservation["kind"], lesson });
+                skillObservations.push({
+                    skillId,
+                    kind: kind as ParsedSkillObservation["kind"],
+                    lesson,
+                });
             }
         }
     }
