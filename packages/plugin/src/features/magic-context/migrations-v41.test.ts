@@ -154,6 +154,9 @@ describe("migration v41 — origin_project + source_type + global '*' unificatio
             const rowCount = db.prepare("SELECT COUNT(*) AS n FROM skill_memory").get() as {
                 n: number;
             };
+            // Prove the merge actually happened (2 dup rows → 1) so the parity
+            // assertion below isn't trivially true on a no-op merge.
+            expect(rowCount.n).toBe(1);
             expect(ftsCount.n).toBe(rowCount.n);
         } finally {
             closeQuietly(db);

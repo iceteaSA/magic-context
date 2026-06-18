@@ -1689,6 +1689,13 @@ export const MIGRATIONS: Migration[] = [
                     ).run(g.sum_hit, g.sum_recall, g.max_used, survivor.project_identity, survivor.id);
                 }
 
+                // Defensive (S4): drop any pre-'*' row whose (skill_id, normalized_hash)
+                // already has a '*' sibling. Dead code in normal flow — v41 is the only
+                // writer of '*' rows and runs atomically, so a pre-'*' row can't coexist
+                // with a '*' sibling after a clean run. It only fires if a prior v41 run
+                // was interrupted after creating some '*' rows but before finishing; in
+                // that case the '*' row is canonical and the leftover pre-'*' row is
+                // dropped rather than colliding on the singleton UPDATE below.
                 db.prepare(
                     `DELETE FROM skill_memory AS s
                      WHERE s.tier='global' AND s.project_identity != '*'
