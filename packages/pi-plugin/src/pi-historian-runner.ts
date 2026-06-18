@@ -51,6 +51,7 @@ import {
 } from "@magic-context/core/features/magic-context/memory";
 import { resolveProjectIdentity } from "@magic-context/core/features/magic-context/memory/project-identity";
 import { getMemoriesByProject } from "@magic-context/core/features/magic-context/memory/storage-memory";
+import { promoteSkillObservations } from "@magic-context/core/features/magic-context/skill-memory/promote";
 import {
 	clearEmergencyDrainLatch,
 	clearEmergencyRecovery,
@@ -1031,6 +1032,24 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 				}
 			}
 
+			if (
+				promotionActive &&
+				!discardedLast &&
+				validatedPass.skillObservations &&
+				validatedPass.skillObservations.length > 0
+			) {
+				try {
+					const written = promoteSkillObservations(
+						db,
+						projectPath,
+						validatedPass.skillObservations,
+					);
+					sessionLog(sessionId, `promoted ${written} skill observation(s)`);
+				} catch (error) {
+					sessionLog(sessionId, "failed to promote skill observations:", error);
+				}
+			}
+
 			// Raw chunk embeddings: the ctx_search semantic substrate over session
 			// history. Fire-and-forget, best-effort, memory-gated.
 			if (embeddingActive) {
@@ -1185,6 +1204,11 @@ type ValidationOutcome =
 					: never
 				: never;
 			userObservations?: string[];
+			skillObservations?: ReturnType<typeof validateHistorianOutput> extends infer T
+				? T extends { ok: true; skillObservations?: infer S }
+					? S
+					: never
+				: never;
 			events?: ReturnType<typeof validateHistorianOutput> extends infer T
 				? T extends { ok: true; events?: infer E }
 					? E
@@ -1226,6 +1250,7 @@ async function validateHistorianResult(
 			compartments: validation.compartments,
 			facts: validation.facts,
 			userObservations: validation.userObservations,
+			skillObservations: validation.skillObservations,
 			events: validation.events,
 		};
 	}
