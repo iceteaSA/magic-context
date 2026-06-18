@@ -1,6 +1,6 @@
 import type { PluginContext } from "../../plugin/types";
 import type { Database } from "../../shared/sqlite";
-import type { ParsedEvent } from "./compartment-parser";
+import type { ParsedEvent, ParsedSkillObservation } from "./compartment-parser";
 import type { ProtectedTailBoundarySnapshot } from "./protected-tail-boundary";
 import type { NotificationParams } from "./send-session-notification";
 
@@ -165,6 +165,7 @@ export type ValidatedHistorianPassResult =
           compartments: CandidateCompartment[];
           facts: Array<{ category: string; content: string }>;
           userObservations?: string[];
+          skillObservations?: ParsedSkillObservation[];
           /** v2: historian-extracted events (stored, not rendered). */
           events?: ParsedEvent[];
           /**
