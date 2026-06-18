@@ -106,7 +106,8 @@ export function validateHistorianOutput(
         compartments: mapped.compartments,
         facts: parsed.facts,
         userObservations: parsed.userObservations.length > 0 ? parsed.userObservations : undefined,
-        skillObservations: parsed.skillObservations.length > 0 ? parsed.skillObservations : undefined,
+        skillObservations:
+            parsed.skillObservations.length > 0 ? parsed.skillObservations : undefined,
         // v2: surface events so the runner can persist them (stored, not rendered).
         events: parsed.events.length > 0 ? parsed.events : undefined,
     };

@@ -1204,7 +1204,9 @@ type ValidationOutcome =
 					: never
 				: never;
 			userObservations?: string[];
-			skillObservations?: ReturnType<typeof validateHistorianOutput> extends infer T
+			skillObservations?: ReturnType<
+				typeof validateHistorianOutput
+			> extends infer T
 				? T extends { ok: true; skillObservations?: infer S }
 					? S
 					: never
