@@ -536,7 +536,7 @@ export function persistCachedM0(
             cached_m0_upgrade_state = ?,
             cached_m0_system_hash = ?,
             cached_m0_model_key = ?,
-            cached_m0_project_identity = ?
+            cached_m0_project_identity = ?,
             cached_m0_external_recall_hash = ?
          WHERE session_id = ?`,
     ).run(
