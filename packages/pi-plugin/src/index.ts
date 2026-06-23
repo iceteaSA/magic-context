@@ -39,6 +39,7 @@ import {
 	type FailClosedReason,
 	formatFailClosedBlockingMessage,
 } from "@magic-context/core/features/magic-context/fail-closed-block";
+import { initializeExternalMemory } from "@magic-context/core/features/magic-context/memory/external-memory";
 import { resolveProjectIdentityForSession } from "@magic-context/core/features/magic-context/memory/project-identity";
 import { scheduleIncrementalIndex } from "@magic-context/core/features/magic-context/message-index-async";
 import { detectOverflow } from "@magic-context/core/features/magic-context/overflow-detection";
@@ -60,7 +61,6 @@ import {
 	getOverflowState,
 	recordOverflowDetected,
 } from "@magic-context/core/features/magic-context/storage-meta-persisted";
-import { initializeExternalMemory } from "@magic-context/core/features/magic-context/memory/external-memory";
 import { runDeferredV22Backfill } from "@magic-context/core/features/magic-context/v22-deferred-backfill";
 import {
 	deriveHistorianChunkTokens,
