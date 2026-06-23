@@ -60,8 +60,8 @@ describe("migration v44 — origin_project + source_type + global '*' unificatio
             insertGlobal(db, "council", "git:repoA", "h1");
 
             const v44 = MIGRATIONS.find((m) => m.version === 44);
-            expect(v41).toBeDefined();
-            v41?.up(db);
+            expect(v44).toBeDefined();
+            v44?.up(db);
 
             const row = db
                 .prepare(
@@ -117,7 +117,7 @@ describe("migration v44 — origin_project + source_type + global '*' unificatio
         }
     });
 
-    test("idempotent: re-running v41 up() does not double-process '*' rows", () => {
+    test("idempotent: re-running v44 up() does not double-process '*' rows", () => {
         const db = new Database(":memory:");
         try {
             initializeDatabase(db);
@@ -125,8 +125,8 @@ describe("migration v44 — origin_project + source_type + global '*' unificatio
             insertGlobal(db, "council", "git:repoA", "h1", { hit: 1 });
 
             const v44 = MIGRATIONS.find((m) => m.version === 44);
-            v41?.up(db);
-            v41?.up(db);
+            v44?.up(db);
+            v44?.up(db);
 
             const rows = db
                 .prepare("SELECT hit_count FROM skill_memory WHERE normalized_hash='h1'")

@@ -141,7 +141,7 @@ Off-hours maintenance (Dreamer) and on-demand prompt augmentation (Sidekick).
 | `dreamer.fallback_models` | string \\| string[] | — | Fallback model IDs if primary is unavailable |
 | `dreamer.schedule` | string | `"02:00-06:00"` | Scheduled window for overnight dreaming (e.g. '02:00-06:00') |
 | `dreamer.max_runtime_minutes` | number (10–) | `120` | Maximum runtime per dream session in minutes |
-| `dreamer.tasks` | `"consolidate"` \\| `"verify"` \\| `"archive-stale"` \\| `"improve"` \\| `"maintain-docs"`[] | `["consolidate","verify","archive-stale","improve"]` | Tasks to run during dreaming, in order |
+| `dreamer.tasks` | `"consolidate"` \\| `"verify"` \\| `"archive-stale"` \\| `"improve"` \\| `"maintain-docs"` \\| `"distill-skill-memory"`[] | `["consolidate","verify","archive-stale","improve"]` | Tasks to run during dreaming, in order |
 | `dreamer.task_timeout_minutes` | number (5–) | `20` | Minutes allocated per task before moving to next |
 | `dreamer.inject_docs` | boolean | `true` | Inject ARCHITECTURE.md and STRUCTURE.md into system prompt |
 | `dreamer.user_memories` | object | — | User memory pipeline: historian extracts behavior observations from each compartment run; dreamer reviews recurring patterns and promotes them to stable user memories injected into all sessions as <user-profile>. Requires dreamer to not be disabled for promotion to actually happen. Graduated from experimental in v0.14. Default: enabled. |
