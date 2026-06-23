@@ -33,10 +33,10 @@ function insertGlobal(
     );
 }
 
-describe("migration v41 — origin_project + source_type + global '*' unification", () => {
-    test("LATEST_SUPPORTED_VERSION equals LATEST_MIGRATION_VERSION after v41", () => {
-        expect(LATEST_SUPPORTED_VERSION).toBe(41);
-        expect(LATEST_MIGRATION_VERSION).toBe(41);
+describe("migration v44 — origin_project + source_type + global '*' unification", () => {
+    test("LATEST_SUPPORTED_VERSION equals LATEST_MIGRATION_VERSION after v44", () => {
+        expect(LATEST_SUPPORTED_VERSION).toBe(44);
+        expect(LATEST_MIGRATION_VERSION).toBe(44);
     });
 
     test("fresh DB has origin_project + source_type columns", () => {
@@ -59,7 +59,7 @@ describe("migration v41 — origin_project + source_type + global '*' unificatio
             for (const m of MIGRATIONS.filter((m) => m.version <= 40)) m.up(db);
             insertGlobal(db, "council", "git:repoA", "h1");
 
-            const v41 = MIGRATIONS.find((m) => m.version === 41);
+            const v44 = MIGRATIONS.find((m) => m.version === 44);
             expect(v41).toBeDefined();
             v41?.up(db);
 
@@ -93,7 +93,7 @@ describe("migration v41 — origin_project + source_type + global '*' unificatio
                 createdAt: 800,
             });
 
-            MIGRATIONS.find((m) => m.version === 41)?.up(db);
+            MIGRATIONS.find((m) => m.version === 44)?.up(db);
 
             const rows = db
                 .prepare(
@@ -124,7 +124,7 @@ describe("migration v41 — origin_project + source_type + global '*' unificatio
             for (const m of MIGRATIONS.filter((m) => m.version <= 40)) m.up(db);
             insertGlobal(db, "council", "git:repoA", "h1", { hit: 1 });
 
-            const v41 = MIGRATIONS.find((m) => m.version === 41);
+            const v44 = MIGRATIONS.find((m) => m.version === 44);
             v41?.up(db);
             v41?.up(db);
 
@@ -146,7 +146,7 @@ describe("migration v41 — origin_project + source_type + global '*' unificatio
             insertGlobal(db, "council", "git:repoA", "dup");
             insertGlobal(db, "council", "git:repoB", "dup");
 
-            MIGRATIONS.find((m) => m.version === 41)?.up(db);
+            MIGRATIONS.find((m) => m.version === 44)?.up(db);
 
             const ftsCount = db.prepare("SELECT COUNT(*) AS n FROM skill_memory_fts").get() as {
                 n: number;
@@ -172,7 +172,7 @@ describe("migration v41 — origin_project + source_type + global '*' unificatio
                 `INSERT INTO skill_memory (skill_id, resolved_path, tier, project_identity, intent, kind, delta, normalized_hash, created_at) VALUES ('s', '/p', 'project', 'git:repoA', 'i', 'fix', 'd', 'ph', 1)`,
             ).run();
 
-            MIGRATIONS.find((m) => m.version === 41)?.up(db);
+            MIGRATIONS.find((m) => m.version === 44)?.up(db);
 
             const row = db
                 .prepare("SELECT project_identity FROM skill_memory WHERE normalized_hash='ph'")
