@@ -47,6 +47,7 @@ import {
 	appendCompartments,
 	getCompartments,
 } from "@magic-context/core/features/magic-context/compartment-storage";
+import type { PromotedMemoryRef } from "@magic-context/core/features/magic-context/memory";
 import {
 	embedPromotedFacts,
 	promoteSessionFactsDurable,

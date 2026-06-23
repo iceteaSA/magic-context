@@ -26,6 +26,12 @@
  */
 
 import {
+	computeRecallSnapshotHash,
+	type ExternalRecallSnapshot,
+	readExternalRecallHash,
+	readExternalRecallSnapshot,
+} from "@magic-context/core/features/magic-context/memory/external-recall-read";
+import {
 	getMaxMemoryIdForProjects,
 	getMemoriesByProject,
 	getMemoriesByProjects,
@@ -33,12 +39,6 @@ import {
 import type { Memory } from "@magic-context/core/features/magic-context/memory/types";
 import { resolveMuralWire } from "@magic-context/core/features/magic-context/mural/render-trigger";
 import type { MuralWireOptions } from "@magic-context/core/features/magic-context/mural/resolve-mural";
-import {
-	computeRecallSnapshotHash,
-	type ExternalRecallSnapshot,
-	readExternalRecallHash,
-	readExternalRecallSnapshot,
-} from "@magic-context/core/features/magic-context/memory/external-recall-read";
 import {
 	type ContextDatabase,
 	clearCachedM0M1,

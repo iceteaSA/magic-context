@@ -22,6 +22,7 @@ import {
 } from "./external-recall-read";
 import { computeNormalizedHash } from "./normalize-hash";
 import { getMemoriesByProject } from "./storage-memory";
+import type { StoredMemoryEmbedding } from "./storage-memory-embeddings";
 
 const inFlight = new Map<string, Promise<void>>();
 
@@ -246,7 +247,6 @@ async function dedupAndTrim(
             for (let i = 0; i < recalledResult.vectors.length; i += 1) {
                 recalledVectors[i] = recalledResult.vectors[i] ?? null;
             }
-            const stored = getProjectEmbeddings(db, projectIdentity);
             // Honor the model guard: only compare against local vectors that were
             // embedded with the same model as the recalled items. Mismatched
             // vectors (different dimensionality or space) produce meaningless
@@ -255,12 +255,14 @@ async function dedupAndTrim(
             // meaningless across potentially different embedding spaces — fall
             // back to hash-only dedup by keeping localVectors empty.
             const queryModelId = recalledResult.modelId;
-            localVectors =
+            // getProjectEmbeddings is model-scoped (one cache bucket per model),
+            // so fetch the same-model pool directly; an unknown/"off" query model
+            // yields no comparable local vectors → hash-only dedup.
+            const stored =
                 queryModelId && queryModelId !== "off"
-                    ? [...stored.values()]
-                          .filter((e) => e.modelId === queryModelId)
-                          .map((e) => e.embedding)
-                    : [];
+                    ? getProjectEmbeddings(db, projectIdentity, queryModelId)
+                    : new Map<number, StoredMemoryEmbedding>();
+            localVectors = [...stored.values()].map((e) => e.embedding);
             if (userContents.length > 0) {
                 const userResult = await embedBatchForProject(projectIdentity, userContents);
                 if (userResult) {
