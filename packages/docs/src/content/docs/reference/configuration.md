@@ -107,6 +107,24 @@ Durable project memory, semantic search, and recall features.
 | `memory.git_commit_indexing.enabled` | boolean | `false` | Index HEAD git commits for ctx_search (git_commit source). Graduated from experimental.git_commit_indexing; opt-in, default off. Independent of memory.enabled. |
 | `memory.git_commit_indexing.since_days` | number (7–3650) | `365` | Days of HEAD history to index (min: 7, max: 3650, default: 365) |
 | `memory.git_commit_indexing.max_commits` | number (100–20000) | `2000` | Max commits kept per project; oldest evicted (min: 100, max: 20000, default: 2000) |
+| `memory.external` | object | — | External long-term memory backend (tee). USER config only. |
+| `memory.external.provider` | `"hindsight"` \\| `"off"` | `"off"` | External memory backend. 'hindsight' tees memory creations to a Hindsight service; 'off' disables (default). SECURITY: this whole block only honors USER-level config. |
+| `memory.external.endpoint` | string | — | Backend base URL (e.g. http://10.0.0.1:8889). Required when provider is hindsight. |
+| `memory.external.api_key` | string | — | Bearer token for the backend (optional). |
+| `memory.external.project_bank` | string | `"mc-{name}-{id8}"` | Bank name template for project-scoped items. Placeholders: {name}=project basename, {id8}=first 8 chars of the project identity hash. |
+| `memory.external.main_bank` | string | — | Bank for user- and global-scoped items. Required when provider is hindsight. Assumed to pre-exist; never created or modified. |
+| `memory.external.retain_sources` | `"historian"` \\| `"agent"` \\| `"dreamer"`[] | `["historian","agent","dreamer"]` | Which creation points tee: historian promotion, agent ctx_memory writes, dreamer user-memory promotion. |
+| `memory.external.tags` | string[] | `[]` | Static tags attached to every retained item. |
+| `memory.external.recall` | object | — | Unified read path: session-start recall + ctx_search external source. |
+| `memory.external.recall.enabled` | boolean | `true` | Session-start recall from the external backend, merged into the context injection (default: true). |
+| `memory.external.recall.timeout_ms` | number (500–15000) | `3000` | Max wait for recall at the first render of a session (already cache-cold). Late results ride the m[1] delta. (default: 3000) |
+| `memory.external.recall.max_tokens` | number (256–8192) | `2048` | Token budget per recall slice (project / profile / global each). (default: 2048) |
+| `memory.external.recall.dedup_threshold` | number (0.5–0.99) | `0.85` | Cosine similarity above which a recalled item is dropped as a duplicate of a local memory. Hash-only fallback when embeddings are unavailable. (default: 0.85) |
+| `memory.external.recall.global_tags` | string[] | `[]` | Tag filter for the global (main-bank) recall slice, matched with tags_match 'any' (untagged content INCLUDED). Empty = no filter (full autoRecall replacement). |
+| `memory.external.recall.global_from_prompt` | boolean | `false` | Include an excerpt of the session's FIRST user prompt in the global-slice recall query (the project name is always included). The first prompt is fixed for the session, so the query — and the frozen recall snapshot — stays deterministic. Default false: pure template query. |
+| `memory.external.recall.search` | boolean | `true` | Expose the ctx_search 'external' source (project + main bank). (default: true) |
+| `memory.external.recall.mental_models` | boolean | `true` | Use Hindsight mental models as the fast path for the project/profile recall slices (single GET, server-refreshed), falling back to recall when absent/empty. (default: true) |
+| `memory.external.recall.profile_mental_models` | string[] | `["user-preferences"]` | Main-bank mental-model names (case-insensitive) used for the profile slice. The main bank is never modified by the plugin — create these manually. |
 | `embedding` | object | — | Embedding provider configuration |
 | `embedding.provider` | `"local"` \\| `"openai-compatible"` \\| `"off"` \\| `"synapse"` | `"local"` | Embedding provider. 'local' uses Xenova/all-MiniLM-L6-v2, 'openai-compatible' requires endpoint and model, 'synapse' uses the certified local Synapse lane with an explicit fallback provider, and 'off' disables embeddings. |
 | `embedding.fallback_provider` | `"local"` \\| `"openai-compatible"` \\| `"off"` | — | Fallback provider for the Synapse lane. Required when provider is 'synapse'; local, openai-compatible, and off are valid. |

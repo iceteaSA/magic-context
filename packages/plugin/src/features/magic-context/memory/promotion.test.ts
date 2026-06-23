@@ -517,13 +517,10 @@ describe("promotion", () => {
             db = makeMemoryDatabase();
             const calls = captureTee();
 
-            promoteSessionFactsToMemory(
-                db,
-                "ses_1",
-                "git:rootsha",
-                [{ category: "PROJECT_RULES", content: "tee me" }],
-                { projectName: "myproj" },
-            );
+            const refs = promoteSessionFactsDurable(db, "ses_1", "git:rootsha", [
+                { category: "PROJECT_RULES", content: "tee me" },
+            ]);
+            await embedPromotedFacts(db, "ses_1", "git:rootsha", refs, { projectName: "myproj" });
             await Bun.sleep(10);
 
             expect(calls.length).toBe(1);
@@ -542,13 +539,15 @@ describe("promotion", () => {
             db = makeMemoryDatabase();
             const calls = captureTee();
 
-            promoteSessionFactsToMemory(db, "ses_1", "git:rootsha", [
+            const refs1 = promoteSessionFactsDurable(db, "ses_1", "git:rootsha", [
                 { category: "PROJECT_RULES", content: "dup fact" },
             ]);
+            await embedPromotedFacts(db, "ses_1", "git:rootsha", refs1);
             await Bun.sleep(10);
-            promoteSessionFactsToMemory(db, "ses_2", "git:rootsha", [
+            const refs2 = promoteSessionFactsDurable(db, "ses_2", "git:rootsha", [
                 { category: "PROJECT_RULES", content: "dup fact" },
             ]);
+            await embedPromotedFacts(db, "ses_2", "git:rootsha", refs2);
             await Bun.sleep(10);
 
             expect(calls.length).toBe(1);
@@ -558,9 +557,10 @@ describe("promotion", () => {
             db = makeMemoryDatabase();
             const calls = captureTee();
 
-            promoteSessionFactsToMemory(db, "ses_1", "git:rootsha", [
+            const refs = promoteSessionFactsDurable(db, "ses_1", "git:rootsha", [
                 { category: "NOT_A_CATEGORY", content: "skip me" },
             ]);
+            await embedPromotedFacts(db, "ses_1", "git:rootsha", refs);
             await Bun.sleep(10);
 
             expect(calls.length).toBe(0);
