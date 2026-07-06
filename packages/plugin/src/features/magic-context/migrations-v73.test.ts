@@ -12,7 +12,7 @@ function columnNames(db: Database, table: string): string[] {
     );
 }
 
-describe("migration v42 — external recall snapshot + m[0] marker", () => {
+describe("migration v73 — external recall snapshot + m[0] marker", () => {
     test("adds external recall columns to session_meta on a fresh DB, idempotently", () => {
         const db = new Database(":memory:");
         try {

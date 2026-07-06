@@ -7,13 +7,7 @@ import type { ImitatedReducedArgs } from "../unwrap-imitated-reduced-args";
  *  decisions / follow-ups. External is a long-term knowledge recall channel;
  *  it's only fired on explicit `ctx_search` calls (not the auto-search hot
  *  path) and only when the external memory backend is configured. */
-export type CtxSearchSource =
-    | "memory"
-    | "message"
-    | "git_commit"
-    | "primer"
-    | "note"
-    | "external";
+export type CtxSearchSource = "memory" | "message" | "git_commit" | "primer" | "note" | "external";
 
 export interface CtxSearchArgs extends ImitatedReducedArgs {
     query?: string;
