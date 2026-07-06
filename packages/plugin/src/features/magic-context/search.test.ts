@@ -31,9 +31,8 @@ import {
 } from "./project-embedding-registry";
 import { parseIdShapedQuery, unifiedSearch } from "./search";
 import { initializeDatabase } from "./storage-db";
-import { addNote, dismissNote, updateNote } from "./storage-notes";
-import { createPrimer } from "./storage-primers";
 import { ensureSessionMetaRow } from "./storage-meta-shared";
+import { addNote, dismissNote, updateNote } from "./storage-notes";
 import { createPrimer } from "./storage-primers";
 
 const readMessages = (sessionId: string) => rawMessagesBySession.get(sessionId) ?? [];
