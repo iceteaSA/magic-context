@@ -1825,70 +1825,74 @@ export async function unifiedSearch(
 
     const [memoryResults, gitCommitResults, primerResults, noteResults, externalResults] =
         await Promise.all([
-        runMemory
-            ? searchMemories({
-                  db,
-                  projectPath,
-                  query: trimmedQuery,
-                  limit: tierLimit,
-                  memoryEnabled: true,
-                  queryEmbedding,
-                  queryModelId:
-                      embeddingModelId && embeddingModelId !== "off" ? embeddingModelId : null,
-                  workspace,
-                  visibleMemoryIds: options.visibleMemoryIds,
-              })
-            : Promise.resolve([] as MemorySearchResult[]),
-        runGitCommits
-            ? Promise.resolve(
-                  searchGitCommits({
+            runMemory
+                ? searchMemories({
                       db,
                       projectPath,
                       query: trimmedQuery,
                       limit: tierLimit,
+                      memoryEnabled: true,
                       queryEmbedding,
                       queryModelId:
                           embeddingModelId && embeddingModelId !== "off" ? embeddingModelId : null,
-                  }),
-              )
-            : Promise.resolve([] as GitCommitSearchResult[]),
-        runPrimers
-            ? Promise.resolve(
-                  searchPrimers({
-                      db,
-                      projectPath,
-                      query: trimmedQuery,
-                      limit: tierLimit,
-                      queryEmbedding,
-                      queryModelId:
-                          embeddingModelId && embeddingModelId !== "off" ? embeddingModelId : null,
-                  }),
-              )
-            : Promise.resolve([] as PrimerSearchResult[]),
-        runNotes
-            ? Promise.resolve(
-                  searchNotes({
+                      workspace,
+                      visibleMemoryIds: options.visibleMemoryIds,
+                  })
+                : Promise.resolve([] as MemorySearchResult[]),
+            runGitCommits
+                ? Promise.resolve(
+                      searchGitCommits({
+                          db,
+                          projectPath,
+                          query: trimmedQuery,
+                          limit: tierLimit,
+                          queryEmbedding,
+                          queryModelId:
+                              embeddingModelId && embeddingModelId !== "off"
+                                  ? embeddingModelId
+                                  : null,
+                      }),
+                  )
+                : Promise.resolve([] as GitCommitSearchResult[]),
+            runPrimers
+                ? Promise.resolve(
+                      searchPrimers({
+                          db,
+                          projectPath,
+                          query: trimmedQuery,
+                          limit: tierLimit,
+                          queryEmbedding,
+                          queryModelId:
+                              embeddingModelId && embeddingModelId !== "off"
+                                  ? embeddingModelId
+                                  : null,
+                      }),
+                  )
+                : Promise.resolve([] as PrimerSearchResult[]),
+            runNotes
+                ? Promise.resolve(
+                      searchNotes({
+                          db,
+                          sessionId,
+                          projectPath,
+                          query: trimmedQuery,
+                          limit: tierLimit,
+                          probes: messageProbes,
+                      }),
+                  )
+                : Promise.resolve([] as NoteSearchResult[]),
+            runExternal
+                ? searchExternal({
                       db,
                       sessionId,
                       projectPath,
+                      projectName: options.projectName,
                       query: trimmedQuery,
                       limit: tierLimit,
-                      probes: messageProbes,
-                  }),
-              )
-            : Promise.resolve([] as NoteSearchResult[]),
-        runExternal
-            ? searchExternal({
-                  db,
-                  sessionId,
-                  projectPath,
-                  projectName: options.projectName,
-                  query: trimmedQuery,
-                  limit: tierLimit,
-                  signal: options.signal,
-              })
-            : Promise.resolve([] as ExternalSearchResult[]),
-    ]);
+                      signal: options.signal,
+                  })
+                : Promise.resolve([] as ExternalSearchResult[]),
+        ]);
 
     const results = [
         ...memoryResults,
