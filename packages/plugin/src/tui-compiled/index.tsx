@@ -751,19 +751,60 @@ const StatusDialog = props => {
         }
       });
     })(), null);
-    _$insert(_el$4, (() => {
-      var _c$8 = _$memo(() => !!s().lastTransformError);
+    _$insert(_el$37, (() => {
+      var _c$8 = _$memo(() => !!s().skillMemory);
       return () => _c$8() && (() => {
-        var _el$62 = _$createElement("box"),
-          _el$63 = _$createElement("text"),
-          _el$64 = _$createTextNode(`⚠ `);
-        _$insertNode(_el$62, _el$63);
-        _$setProp(_el$62, "marginTop", 1);
-        _$setProp(_el$62, "width", "100%");
-        _$insertNode(_el$63, _el$64);
-        _$insert(_el$63, () => s().lastTransformError, null);
-        _$effect(_$p => _$setProp(_el$63, "fg", t().error, _$p));
-        return _el$62;
+        const sm = s().skillMemory;
+        return (() => {
+          var _el$62 = _$createElement("box"),
+            _el$63 = _$createElement("box"),
+            _el$64 = _$createElement("text"),
+            _el$65 = _$createElement("b");
+          _$insertNode(_el$62, _el$63);
+          _$setProp(_el$62, "flexDirection", "column");
+          _$insertNode(_el$63, _el$64);
+          _$setProp(_el$63, "marginTop", 1);
+          _$insertNode(_el$64, _el$65);
+          _$insertNode(_el$65, _$createTextNode(`Skill Memory`));
+          _$insert(_el$62, _$createComponent(R, {
+            get t() {
+              return t();
+            },
+            l: "Notes",
+            get v() {
+              return `${sm.totalNotes} (${sm.skillsWithNotes} ${sm.skillsWithNotes === 1 ? "skill" : "skills"})`;
+            }
+          }), null);
+          _$insert(_el$62, _$createComponent(R, {
+            get t() {
+              return t();
+            },
+            l: "Pinned",
+            get v() {
+              return String(sm.pinnedNotes);
+            },
+            get fg() {
+              return t().textMuted;
+            }
+          }), null);
+          _$effect(_$p => _$setProp(_el$64, "fg", t().text, _$p));
+          return _el$62;
+        })();
+      })();
+    })(), null);
+    _$insert(_el$4, (() => {
+      var _c$9 = _$memo(() => !!s().lastTransformError);
+      return () => _c$9() && (() => {
+        var _el$67 = _$createElement("box"),
+          _el$68 = _$createElement("text"),
+          _el$69 = _$createTextNode(`⚠ `);
+        _$insertNode(_el$67, _el$68);
+        _$setProp(_el$67, "marginTop", 1);
+        _$setProp(_el$67, "width", "100%");
+        _$insertNode(_el$68, _el$69);
+        _$insert(_el$68, () => s().lastTransformError, null);
+        _$effect(_$p => _$setProp(_el$68, "fg", t().error, _$p));
+        return _el$67;
       })();
     })(), _el$49);
     _$insertNode(_el$49, _el$50);
@@ -959,31 +1000,31 @@ const EmbedDialog = props => {
   const t = () => theme();
   const lines = () => props.detail.statusText.split("\n");
   return (() => {
-    var _el$65 = _$createElement("box"),
-      _el$66 = _$createElement("box"),
-      _el$67 = _$createElement("text"),
-      _el$68 = _$createElement("b");
-    _$insertNode(_el$65, _el$66);
-    _$setProp(_el$65, "flexDirection", "column");
-    _$setProp(_el$65, "width", "100%");
-    _$setProp(_el$65, "paddingLeft", 2);
-    _$setProp(_el$65, "paddingRight", 2);
-    _$setProp(_el$65, "paddingTop", 1);
-    _$setProp(_el$65, "paddingBottom", 1);
-    _$insertNode(_el$66, _el$67);
-    _$setProp(_el$66, "justifyContent", "center");
-    _$setProp(_el$66, "width", "100%");
-    _$setProp(_el$66, "marginBottom", 1);
-    _$insertNode(_el$67, _el$68);
-    _$insertNode(_el$68, _$createTextNode(`Embedding`));
-    _$insert(_el$65, () => lines().map(line => (() => {
-      var _el$70 = _$createElement("text");
-      _$insert(_el$70, line);
-      _$effect(_$p => _$setProp(_el$70, "fg", t().text, _$p));
-      return _el$70;
+    var _el$70 = _$createElement("box"),
+      _el$71 = _$createElement("box"),
+      _el$72 = _$createElement("text"),
+      _el$73 = _$createElement("b");
+    _$insertNode(_el$70, _el$71);
+    _$setProp(_el$70, "flexDirection", "column");
+    _$setProp(_el$70, "width", "100%");
+    _$setProp(_el$70, "paddingLeft", 2);
+    _$setProp(_el$70, "paddingRight", 2);
+    _$setProp(_el$70, "paddingTop", 1);
+    _$setProp(_el$70, "paddingBottom", 1);
+    _$insertNode(_el$71, _el$72);
+    _$setProp(_el$71, "justifyContent", "center");
+    _$setProp(_el$71, "width", "100%");
+    _$setProp(_el$71, "marginBottom", 1);
+    _$insertNode(_el$72, _el$73);
+    _$insertNode(_el$73, _$createTextNode(`Embedding`));
+    _$insert(_el$70, () => lines().map(line => (() => {
+      var _el$75 = _$createElement("text");
+      _$insert(_el$75, line);
+      _$effect(_$p => _$setProp(_el$75, "fg", t().text, _$p));
+      return _el$75;
     })()), null);
-    _$effect(_$p => _$setProp(_el$67, "fg", t().accent, _$p));
-    return _el$65;
+    _$effect(_$p => _$setProp(_el$72, "fg", t().accent, _$p));
+    return _el$70;
   })();
 };
 async function showEmbedDialog(api, targetSessionId = getSessionId(api)) {
