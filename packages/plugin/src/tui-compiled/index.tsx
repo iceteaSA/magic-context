@@ -1132,11 +1132,11 @@ function renderTuiProbeCustomArm(api, result) {
     api.ui.dialog.replace(() => {
       try {
         return (() => {
-          var _el$71 = _$createElement("box"),
-            _el$72 = _$createElement("text");
-          _$insertNode(_el$71, _el$72);
-          _$insertNode(_el$72, _$createTextNode(`probe`));
-          return _el$71;
+          var _el$76 = _$createElement("box"),
+            _el$77 = _$createElement("text");
+          _$insertNode(_el$76, _el$77);
+          _$insertNode(_el$77, _$createTextNode(`probe`));
+          return _el$76;
         })();
       } catch (error) {
         result.customThrew = probeErrorMessage(error);
@@ -1209,11 +1209,11 @@ function reportTuiProbe(api, result) {
   if (result.customThrew === null) {
     try {
       api.ui.dialog.replace(() => (() => {
-        var _el$74 = _$createElement("box"),
-          _el$75 = _$createElement("text");
-        _$insertNode(_el$74, _el$75);
-        _$insert(_el$75, summary);
-        return _el$74;
+        var _el$79 = _$createElement("box"),
+          _el$80 = _$createElement("text");
+        _$insertNode(_el$79, _el$80);
+        _$insert(_el$80, summary);
+        return _el$79;
       })());
       return;
     } catch (error) {

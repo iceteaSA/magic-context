@@ -512,6 +512,9 @@ describe("promotion", () => {
                 }
             ).count;
             expect(count).toBe(0);
+        });
+    });
+
     describe("#given external memory tee", () => {
         it("tees newly inserted facts with project scope", async () => {
             db = makeMemoryDatabase();
