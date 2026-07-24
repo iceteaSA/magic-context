@@ -1352,7 +1352,7 @@ describe("runCompartmentAgent", () => {
                             parts: [
                                 {
                                     type: "text",
-                                    text: `<compartment start="1" end="2" title="T">Summary</compartment>\n<skill_observations>\n* council | gotcha | fast aggregator\n</skill_observations>`,
+                                    text: `<compartment start="1" end="2" title="T"><p1>Summary</p1></compartment>\n<skill_observations>\n* council | gotcha | fast aggregator\n</skill_observations>`,
                                 },
                             ],
                         },
