@@ -1364,6 +1364,7 @@ function readCurrentM0SnapshotMarkersUncached(args: M0SnapshotMarkerReadArgs): {
             systemHash: hard.systemHash,
             modelKey: hard.modelKey,
             projectIdentity: args.projectPath ?? null,
+            externalRecallHash: readExternalRecallHash(args.db, args.sessionId),
         },
     };
 }
@@ -1384,7 +1385,13 @@ function refreshVolatileMarkerInputs(
         systemHash: hard.systemHash,
         modelKey: hard.modelKey,
         projectIdentity: args.projectPath ?? null,
-        externalRecallHash: readExternalRecallHash(args.db, args.sessionId),
+        // externalRecallHash is deliberately NOT re-read here: this refresh runs on
+        // the CACHED marker path (steady state, one statement execution, zero
+        // prepares) and the hash is not a materialization trigger. Carrying the
+        // cached value forward is also safe for the m[1] delta comparison — a
+        // recall that settled after the cache fill leaves the marker at its older
+        // value, so the live-vs-marker check still renders the delta. The
+        // authoritative stamp happens in-transaction at materialize time.
     };
 }
 

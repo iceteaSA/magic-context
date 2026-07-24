@@ -7,8 +7,8 @@ import { getAuthorityManagedMarker } from "../../features/magic-context/context-
 import {
     archiveMemory,
     CATEGORY_PRIORITY,
-    getMemoriesByIds,
     getExternalMemoryStatus,
+    getMemoriesByIds,
     getMemoriesByProject,
     getMemoryByHash,
     getMemoryById,
@@ -440,7 +440,10 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
                 return "Error: Could not resolve project identity for memory action.";
             }
             await deps.ensureProjectRegistered?.(toolContext.directory, deps.db);
-            if (args.action !== "list") {
+            // `verify` is dreamer-only and has no Rust-module counterpart
+            // (rust-tool-backends' memory action union covers the primary
+            // write/read actions), so it stays on the TS path like `list`.
+            if (args.action !== "list" && args.action !== "verify") {
                 const marker = getAuthorityManagedMarker(deps.db, projectPath);
                 let authorityState: "TS" | "PREPARING" | "MODULE" | "DRAINING" | null = null;
                 try {

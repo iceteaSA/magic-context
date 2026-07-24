@@ -1663,6 +1663,13 @@ CREATE INDEX IF NOT EXISTS idx_dream_queue_pending ON dream_queue(started_at, en
     ensureColumn(db, "session_meta", "cached_m0_model_key", "TEXT");
     ensureColumn(db, "session_meta", "cached_m0_project_identity", "TEXT");
     ensureColumn(db, "session_meta", "cached_m0_external_recall_hash", "TEXT");
+    // External-memory v2 session recall snapshot (migration v73). Declared here
+    // too so an upgraded DB that lost the migration row still self-heals, and so
+    // a fresh init and a replayed migration chain converge on the same column
+    // order (the schema-convergence test asserts byte-equal table_info).
+    ensureColumn(db, "session_meta", "external_recall_json", "TEXT");
+    ensureColumn(db, "session_meta", "external_recall_state", "TEXT");
+    ensureColumn(db, "session_meta", "external_recall_at", "INTEGER");
     // Pi-only: frozen baseline boundary (end_message_id) captured at
     // materialization so Pi trims against the snapshot boundary that produced
     // m[0], not a live-recomputed one a concurrent recomp could have moved.
