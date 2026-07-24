@@ -1,10 +1,5 @@
 import * as crypto from "node:crypto";
 import { basename } from "node:path";
-import { getExternalRecallConfig } from "../../features/magic-context/memory/external-memory";
-import {
-    maybeAwaitExternalRecall,
-    startSessionRecall,
-} from "../../features/magic-context/memory/external-recall";
 import {
     type AuthorityModuleClient,
     checksumAuthoritySeedRows,
@@ -12,6 +7,11 @@ import {
     ensureContextStoreUuid,
     getAuthorityManagedMarker,
 } from "../../features/magic-context/context-authority";
+import { getExternalRecallConfig } from "../../features/magic-context/memory/external-memory";
+import {
+    maybeAwaitExternalRecall,
+    startSessionRecall,
+} from "../../features/magic-context/memory/external-recall";
 import {
     isLinkedGitWorktree,
     resolveProjectIdentity,
@@ -498,6 +498,8 @@ export function scheduleTsAuthorityRecovery(args: {
                 );
             }
         });
+}
+
 /**
  * Extract the text of the session's FIRST meaningful user message — the raw
  * prompt that opened the conversation. Used to enrich the global external

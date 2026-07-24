@@ -37,8 +37,8 @@ import { basename } from "node:path";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
 	archiveMemory,
-	getMemoriesByIds,
 	getExternalMemoryStatus,
+	getMemoriesByIds,
 	getMemoriesByProject,
 	getMemoryByHash,
 	getMemoryById,

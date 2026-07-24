@@ -52,7 +52,6 @@ import {
 	embedPromotedFacts,
 	promoteSessionFactsDurable,
 } from "@magic-context/core/features/magic-context/memory";
-import type { PromotedMemoryRef } from "@magic-context/core/features/magic-context/memory";
 import { resolveProjectIdentityForSession } from "@magic-context/core/features/magic-context/memory/project-identity";
 import { getMemoriesByProject } from "@magic-context/core/features/magic-context/memory/storage-memory";
 import {
