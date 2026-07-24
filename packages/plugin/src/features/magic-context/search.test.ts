@@ -1258,6 +1258,9 @@ describe("parseIdShapedQuery", () => {
         expect(parseIdShapedQuery("-1")).toBeNull();
         expect(parseIdShapedQuery("0x10")).toBeNull();
         expect(parseIdShapedQuery("id 7234")).toBeNull();
+    });
+});
+
 const HINDSIGHT_TEST_CONFIG = {
     provider: "hindsight" as const,
     endpoint: "http://10.1.0.99:8889",

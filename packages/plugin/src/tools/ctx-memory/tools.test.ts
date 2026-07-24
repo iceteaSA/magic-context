@@ -2112,6 +2112,9 @@ describe("createCtxMemoryTools", () => {
             expect(result).toContain(String(own.id));
             expect(result).toContain("Own constraint present.");
             expect(result).toContain(`id ${missing}: not found or not visible from this project`);
+        });
+    });
+
     describe("#given corrective propagation to external backend", () => {
         function extractMemoryId(result: string): number {
             const match = result.match(/\[ID:\s*(\d+)\]/);
