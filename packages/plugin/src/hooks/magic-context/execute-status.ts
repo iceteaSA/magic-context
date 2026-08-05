@@ -1,5 +1,10 @@
 import { DEFAULT_EXECUTE_THRESHOLD_PERCENTAGE } from "../../config/schema/magic-context";
 import { getCompartments } from "../../features/magic-context/compartment-storage";
+import {
+    fetchExternalFailedRetains,
+    getExternalMemoryStatus,
+} from "../../features/magic-context/memory/external-memory";
+import { readExternalRecallSnapshot } from "../../features/magic-context/memory/external-recall-read";
 import { resolveProjectIdentity } from "../../features/magic-context/memory/project-identity";
 import { parseCacheTtl } from "../../features/magic-context/scheduler";
 import { getSkillMemoryStats } from "../../features/magic-context/skill-memory/storage";
@@ -203,7 +208,7 @@ export async function executeStatus(
         // the project identity (skill_memory is partitioned on
         // project_identity). Mirrors the external-memory section's pattern:
         // surface counts only when there is something to show, skip otherwise.
-        // Wrapped in try/catch so a missing skill_memory table (e.g. pre-v37
+        // Wrapped in try/catch so a missing skill_memory table (e.g. pre-v73
         // migration in tests) doesn't fail the whole status output — same
         // defensive pattern the tags / pending_ops queries use.
         if (directory) {
@@ -221,8 +226,27 @@ export async function executeStatus(
                     }
                 }
             } catch {
-                // skill_memory may not exist (pre-v37 schema) — skip silently
+                // skill_memory may not exist (pre-v73 schema) — skip silently
             }
+        }
+
+        const externalStatus = getExternalMemoryStatus();
+        if (externalStatus) {
+            const { state: recallState } = readExternalRecallSnapshot(db, sessionId);
+            // fetchExternalFailedRetains inherits the 10s fetch timeout and
+            // circuit breaker from HindsightMemoryBackend.request(); null on
+            // every failure path so the field is always safe to surface.
+            const failedRetainCount = await fetchExternalFailedRetains();
+            lines.push(
+                "",
+                "### External memory",
+                `- provider: ${externalStatus.provider} (${externalStatus.endpoint ?? "?"})`,
+                `- circuit: ${externalStatus.circuitState ?? "n/a"}`,
+                `- session recall: ${recallState ?? "not started"}`,
+                ...(failedRetainCount !== null
+                    ? [`- failed retains (server): ${failedRetainCount}`]
+                    : []),
+            );
         }
 
         return lines.join("\n");

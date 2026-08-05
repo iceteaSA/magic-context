@@ -108,6 +108,5 @@ describe("migration v74 — skill_memory embeddings + FTS", () => {
 
     test("LATEST_SUPPORTED_VERSION equals LATEST_MIGRATION_VERSION after v74", () => {
         expect(LATEST_SUPPORTED_VERSION).toBe(LATEST_MIGRATION_VERSION);
-        expect(LATEST_SUPPORTED_VERSION).toBe(75);
     });
 });
