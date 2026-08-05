@@ -2811,9 +2811,9 @@ export const MIGRATIONS: Migration[] = [
         },
     },
     {
-        // Skill-memory historian extraction: was v41/v44/v56 across earlier
+        // Skill-memory historian extraction: was v41/v44/v56/v72 across earlier
         // rebases; renumbered across upstream migrations — now v75 after
-        // upstream took v54-v72 (skill is now v73/74/75).
+        // upstream v0.33.1 took v70-v72 (skill is now v73/74/75).
         version: 75,
         description:
             "Skill-memory historian extraction: origin_project + source_type columns; unify global-tier notes under project_identity='*' (collision-merge)",
