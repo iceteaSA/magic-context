@@ -2741,7 +2741,6 @@ const MIGRATIONS: Migration[] = [
         },
     },
 ];
-];
 
 /**
  * Highest version in the MIGRATIONS array. `LATEST_SUPPORTED_VERSION` in

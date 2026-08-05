@@ -300,7 +300,7 @@ describe("buildSidebarSnapshot — Rust module status merge", () => {
 });
 
 describe("compaction-off sidebar RPC data", () => {
-    test("reports the resolved mode and raw native usage independently of threshold fill", () => {
+    test("reports the resolved mode and raw native usage independently of threshold fill", async () => {
         const db = createTestDb();
         try {
             const sessionId = "ses-native-sidebar";
@@ -342,7 +342,7 @@ describe("compaction-off sidebar RPC data", () => {
                 },
                 false,
             );
-            const detail = buildStatusDetail(
+            const detail = await buildStatusDetail(
                 db,
                 sessionId,
                 process.cwd(),
@@ -369,7 +369,7 @@ describe("compaction-off sidebar RPC data", () => {
             );
             expect(snapshot.archivedCompartmentCount).toBe(1);
 
-            const enabledDetail = buildStatusDetail(db, "ses-native-sidebar-on", process.cwd());
+            const enabledDetail = await buildStatusDetail(db, "ses-native-sidebar-on", process.cwd());
             expect(enabledDetail.compaction_enabled).toBe(true);
         } finally {
             closeQuietly(db);
@@ -434,10 +434,10 @@ describe("buildStatusDetail — history token reuse (council audit bg_51106601 #
 });
 
 describe("buildStatusDetail — storage versions probe", () => {
-    test("reports the live context.db schema version and the plugin fence", () => {
+    test("reports the live context.db schema version and the plugin fence", async () => {
         const db = createTestDb();
         try {
-            const detail = buildStatusDetail(db, "ses-storage-versions", process.cwd());
+            const detail = await buildStatusDetail(db, "ses-storage-versions", process.cwd());
 
             // The probe must carry the live MAX(schema_migrations) value, not a
             // hardcoded one, plus this build's fence. A fully migrated test DB sits
@@ -454,14 +454,14 @@ describe("buildStatusDetail — storage versions probe", () => {
         }
     });
 
-    test("follows an older live DB version while the fence stays put", () => {
+    test("follows an older live DB version while the fence stays put", async () => {
         const db = createTestDb();
         try {
             // Simulate a DB migrated by an older plugin: drop the recorded versions
             // above 50. The probe must follow the live value down.
             db.prepare("DELETE FROM schema_migrations WHERE version > ?").run(50);
 
-            const detail = buildStatusDetail(db, "ses-storage-versions-old", process.cwd());
+            const detail = await buildStatusDetail(db, "ses-storage-versions-old", process.cwd());
 
             expect(detail.storage_versions.context_db_schema_version).toBe(50);
             expect(detail.storage_versions.plugin_supported_version).toBe(LATEST_SUPPORTED_VERSION);
@@ -487,21 +487,6 @@ describe("buildStatusDetail — external memory section", () => {
         }
     });
 
-    test("provider on, fake backend exposes fetchFailedRetainCount → detail surfaces the count", async () => {
-        const db = createTestDb();
-        try {
-            const sessionId = "ses-status-ext-on";
-            db.prepare(
-                "INSERT INTO session_meta (session_id, last_input_tokens, last_context_percentage) VALUES (?, 0, 0)",
-            ).run(sessionId);
-            _setTestExternalBackendFactory(() => ({
-                backendId: "fake:ext-status",
-                initialize: async () => true,
-                retain: async () => 0,
-                dispose: async () => {},
-                _getCircuitState: () => "closed",
-                fetchFailedRetainCount: async () => 3,
-            }));
     test("provider on, fake backend exposes fetchFailedRetainCount → detail surfaces the count", async () => {
         const db = createTestDb();
         try {
