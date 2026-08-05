@@ -59,8 +59,8 @@ describe("migration v72 — per-session compaction mode record (issue #266)", ()
         }
     });
 
-    test("LATEST_SUPPORTED_VERSION bumped to 72 (schema-fence lockstep)", () => {
-        expect(LATEST_SUPPORTED_VERSION).toBe(72);
+    test("LATEST_SUPPORTED_VERSION is at or above 72 (schema-fence lockstep)", () => {
+        expect(LATEST_SUPPORTED_VERSION).toBeGreaterThanOrEqual(72);
     });
 
     test("read/write helpers round-trip on, off, and null (no-record)", () => {
