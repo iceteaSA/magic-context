@@ -17,7 +17,6 @@ import {
     type MemoryCategory,
     mergeMemoryStats,
     removeFromExternalBackend,
-    saveEmbedding,
     saveEmbeddingIfHashMatches,
     supersededMemory,
     teeToExternalBackend,
@@ -1075,7 +1074,7 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
 
             if (args.action === "verify") {
                 const verifyIds = args.ids;
-                if (!verifyIds || verifyIds.length !== 1 || !verifyIds.every(Number.isInteger)) {
+                if (verifyIds?.length !== 1 || !verifyIds.every(Number.isInteger)) {
                     return "Error: 'ids' must contain exactly one integer memory ID when action is 'verify'.";
                 }
                 const verifyId = verifyIds[0];

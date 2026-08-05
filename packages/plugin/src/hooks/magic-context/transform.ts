@@ -112,7 +112,7 @@ import {
 } from "./protected-tail-boundary";
 import { readRawSessionMessages } from "./read-session-chunk";
 import { findLastAssistantModelFromOpenCodeDb, isMidTurn } from "./read-session-db";
-import { estimateTokens, extractTexts, hasMeaningfulUserText } from "./read-session-formatting";
+import { extractTexts, hasMeaningfulUserText } from "./read-session-formatting";
 import { extractInMemoryMessageViews } from "./read-session-raw";
 import { createRustModeTransform, type RustModeModuleClient } from "./rust-mode-transform";
 import { sendIgnoredMessage } from "./send-session-notification";

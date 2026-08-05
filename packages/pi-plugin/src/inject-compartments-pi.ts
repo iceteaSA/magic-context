@@ -81,8 +81,6 @@ import {
 	DEFAULT_MEMORY_BUDGET_TOKENS,
 	DEFAULT_USER_PROFILE_BUDGET_TOKENS,
 	type MemoryRenderOptions,
-	type PreparedCompartmentInjection,
-	prepareCompartmentInjection,
 	renderExternalMemoryBlock,
 	renderExternalMemoryDelta,
 	renderMemoryBlockV2,
