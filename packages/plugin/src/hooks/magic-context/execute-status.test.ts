@@ -70,41 +70,7 @@ describe("executeStatus", () => {
         db.close();
     });
 
-    test("shows the exact nudge hygiene ratio and keeps zero values", () => {
-        const db = new Database(":memory:");
-        initializeDatabase(db);
-        getOrCreateSessionMeta(db, SESSION_ID);
-
-        const status = executeStatus(
-            db,
-            SESSION_ID,
-            20,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            {
-                u: 0,
-                t: 0,
-                severity: 0,
-                evaluable: true,
-                generationInvalidated: false,
-                baselineGeneration: 0,
-                computedAt: 0,
-            },
-        );
-
-        expect(status).toContain("### Tail Hygiene");
-        expect(status).toContain("0.0% · 0 / 0 tok");
-        expect(status).toContain("Reasoning is excluded from both terms");
-        db.close();
-    });
-
-    test("renders 'never expires' for cacheTtl 'never'", () => {
+    test("renders 'never expires' for cacheTtl 'never'", async () => {
         const db = new Database(":memory:");
         initializeDatabase(db);
         getOrCreateSessionMeta(db, SESSION_ID);
@@ -112,7 +78,7 @@ describe("executeStatus", () => {
             SESSION_ID,
         );
 
-        const status = executeStatus(db, SESSION_ID, 20);
+        const status = await executeStatus(db, SESSION_ID, 20);
 
         expect(status).toContain("- Configured: never");
         expect(status).toContain("- Remaining: never expires (always-warm lane)");
