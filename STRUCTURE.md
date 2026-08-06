@@ -127,6 +127,8 @@ Unless specified otherwise, TypeScript paths are relative to `packages/plugin/` 
 **Core Logic:**
 - `src/hooks/magic-context/transform.ts`: Run the turn transform; orchestrate tagging, replay paths, prepareCompartmentInjection, and downstream postprocess hand-off.
 - `src/hooks/magic-context/transform-postprocess-phase.ts`: Apply pending ops, heuristic cleanup, deferred-note nudges, **synthetic-todowrite injection (B7)**, and auto-search hints.
+- `src/hooks/magic-context/compaction-off-transition.ts`: Reconcile compaction-off mode transitions, marker cleanup, and durable notice/cleanup pending states.
+- `src/hooks/magic-context/child-session-spawn.ts`: Shared child-session spawner with schema-fence probe enforcement.
 - `src/hooks/magic-context/hook.ts`: Compose runtime services.
 - `src/hooks/magic-context/strip-content.ts`: Strip and replay reasoning, inline thinking, structural noise, dropped placeholders, merged-assistant reasoning, processed images, and system-injected messages.
 - `src/hooks/magic-context/caveman.ts`: Experimental age-tier text compression for primary sessions.
@@ -160,6 +162,7 @@ Unless specified otherwise, TypeScript paths are relative to `packages/plugin/` 
 - `src/features/magic-context/storage-clone.ts`: Implement transaction-locked session state copy helpers for clone forks.
 - `src/features/magic-context/storage-schema-helpers.ts`: Implement schema-mutation and NULL-healing helpers to avoid dependency cycles between database creation and migrations.
 - `src/features/magic-context/storage-meta-persisted.ts`: Read and write per-session persisted scalars and JSON blobs.
+- `src/features/magic-context/schema-fence-probe.ts`: Probe schema version fence state to block stale builds during child-session spawns.
 - `src/features/magic-context/fail-closed-block.ts`: Implement loud fail-closed blocking when Magic Context cannot operate on a session.
 - `src/features/magic-context/migrations.ts`: Versioned schema migrations v1–v71 (`LATEST_SUPPORTED_VERSION` in `storage-db.ts` must track the highest; `schema-version-fence.test.ts` asserts they stay in lockstep).
 - `src/features/magic-context/message-index.ts`: FTS-backed raw-message index for `ctx_search`.
