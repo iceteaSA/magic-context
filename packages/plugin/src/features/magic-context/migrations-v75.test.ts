@@ -35,8 +35,8 @@ function insertGlobal(
 
 describe("migration v75 — origin_project + source_type + global '*' unification", () => {
     test("LATEST_SUPPORTED_VERSION equals LATEST_MIGRATION_VERSION after v75", () => {
-        expect(LATEST_SUPPORTED_VERSION).toBe(75);
-        expect(LATEST_MIGRATION_VERSION).toBe(75);
+        expect(LATEST_SUPPORTED_VERSION).toBe(76);
+        expect(LATEST_MIGRATION_VERSION).toBe(76);
     });
 
     test("fresh DB has origin_project + source_type columns", () => {

@@ -724,7 +724,7 @@ export function createMagicContextCommandHandler(deps: {
                 const liveContextLimit = deps.getContextLimit?.(sessionId);
                 // Use dreamer's directory when available (== project's working
                 // directory for dreamer-aware sessions); fall back to cwd so
-                // the new "Skill memory" section can resolve a project identity
+                // the "Skill memory" section can resolve a project identity
                 // for sessions that don't have dreamer configured.
                 const statusDirectory = deps.dreamer?.projectPath ?? process.cwd();
                 const statusOutput = await executeStatus(

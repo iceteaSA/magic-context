@@ -2043,7 +2043,7 @@ export const MIGRATIONS: Migration[] = [
                     last_active_at INTEGER NOT NULL,
                     PRIMARY KEY(project_path, scope, model_id)
                 );
-            `);
+                `);
         },
     },
     {
@@ -2887,6 +2887,35 @@ export const MIGRATIONS: Migration[] = [
                     `UPDATE skill_memory SET origin_project = project_identity, project_identity = '*' WHERE tier='global' AND project_identity != '*'`,
                 ).run();
             })();
+        },
+    },
+    {
+        // External memory v2: session recall snapshot + m[0] recall marker.
+        // Renumbered across many upstream rebases (v31→33→37→38→39→42→50→73); in
+        // the union it follows the three skill migrations (v73/74/75) by the
+        // standing convention that skill precedes external, so it is v76 here.
+        // The body is ensureColumn-idempotent, so a dev DB that already ran it
+        // under an old number re-applies harmlessly.
+        version: 76,
+        description: "External memory v2: session recall snapshot + m[0] recall marker",
+        up: (db: Database) => {
+            // session_meta existence guard — see v30's comment (partial test fixtures).
+            const hasSessionMeta = db
+                .prepare(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='session_meta' LIMIT 1",
+                )
+                .get();
+            if (!hasSessionMeta) return;
+            // Per-session external recall snapshot (post-dedup, post-trim) — the
+            // frozen content every render replays for byte stability.
+            ensureColumn(db, "session_meta", "external_recall_json", "TEXT");
+            ensureColumn(db, "session_meta", "external_recall_state", "TEXT");
+            ensureColumn(db, "session_meta", "external_recall_at", "INTEGER");
+            // m[0] marker: hash of the external content baked into the cached m[0]
+            // ('' = none). NOT a mustMaterialize trigger — drives only the m[1]
+            // <external-memory> delta comparison. No cache-clear needed: the
+            // cachedRowMatchesState comparison normalizes NULL and '' to equal.
+            ensureColumn(db, "session_meta", "cached_m0_external_recall_hash", "TEXT");
         },
     },
 ];

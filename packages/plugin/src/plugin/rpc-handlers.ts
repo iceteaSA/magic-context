@@ -5,6 +5,11 @@
 import { isCompactionEnabled } from "../config/agent-disable";
 import type { MagicContextConfig } from "../config/schema/magic-context";
 import { getMostRecentTaskRunAt } from "../features/magic-context/dreamer/storage-task-schedule";
+import {
+    fetchExternalFailedRetains,
+    getExternalMemoryStatus,
+} from "../features/magic-context/memory/external-memory";
+import { readExternalRecallSnapshot } from "../features/magic-context/memory/external-recall-read";
 import { resolveProjectIdentity } from "../features/magic-context/memory/project-identity";
 import { getMural } from "../features/magic-context/mural/storage-mural";
 import { getEmbeddingCoverageStatus } from "../features/magic-context/project-embedding-registry";
@@ -555,7 +560,7 @@ export function buildSidebarSnapshotRpcResponse(
     }
 }
 
-export function buildStatusDetail(
+export async function buildStatusDetail(
     db: Database,
     sessionId: string,
     directory: string,
@@ -565,7 +570,7 @@ export function buildStatusDetail(
     injectionBudgetTokens?: number,
     moduleStatus?: RustSessionStatus,
     compactionEnabled = true,
-): StatusDetail {
+): Promise<StatusDetail> {
     const base = buildSidebarSnapshot(
         db,
         sessionId,
@@ -612,6 +617,7 @@ export function buildStatusDetail(
             plugin_supported_version: LATEST_SUPPORTED_VERSION,
         },
         skillMemory: null,
+        externalMemory: null,
     };
 
     // Skill-memory stats — scoped to the session's project identity (the
@@ -622,6 +628,22 @@ export function buildStatusDetail(
     detail.skillMemory = base.projectIdentity
         ? getSkillMemoryStats(db, base.projectIdentity)
         : null;
+
+    const externalStatus = getExternalMemoryStatus();
+    if (externalStatus) {
+        const { state: recallState } = readExternalRecallSnapshot(db, sessionId);
+        // fetchExternalFailedRetains goes through HindsightMemoryBackend's
+        // request() — inherits the 10s fetch timeout and circuit breaker, so
+        // a hung backend can't drag the dialog past that cap. Returns null
+        // on any failure path (offline / endpoint missing / malformed
+        // envelope), so the field is always safe to surface.
+        const failedRetainCount = await fetchExternalFailedRetains();
+        detail.externalMemory = {
+            ...externalStatus,
+            recallState,
+            failedRetainCount,
+        };
+    }
 
     try {
         // Storage-version probe: live DB schema vs this binary's fence. Fills the
@@ -951,6 +973,7 @@ export function registerRpcHandlers(
             historianTimeoutMs: config.historian_timeout_ms ?? DEFAULT_HISTORIAN_TIMEOUT_MS,
             memoryEnabled: config.memory?.enabled ?? true,
             autoPromote: config.memory?.auto_promote ?? true,
+            embeddingEnabled: config.embedding?.provider !== "off",
             fallbackModels: resolveFallbackChain(config.historian?.fallback_models),
             runMigration: config.memory?.enabled !== false && !!config.historian?.model,
             userMemoriesEnabled: userMemoryCollectionEnabled(config.dreamer),

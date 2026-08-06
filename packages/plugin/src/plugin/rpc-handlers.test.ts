@@ -22,6 +22,11 @@ import {
     buildStatusDetail,
 } from "./rpc-handlers";
 import { resetSidebarSnapshotCache } from "./sidebar-snapshot-cache";
+import {
+    _resetExternalMemoryForTests,
+    _setTestExternalBackendFactory,
+    initializeExternalMemory,
+} from "../features/magic-context/memory/external-memory";
 
 function createTestDb(): Database {
     const db = new Database(":memory:");
@@ -33,6 +38,11 @@ function createTestDb(): Database {
 afterEach(() => {
     resetSidebarSnapshotCache();
     clearModelsDevCache();
+    // The external-memory singleton is process-global: without this reset a
+    // backend factory installed by one test leaks into the next (the
+    // "no fetchFailedRetainCount hook" case would keep the previous test's
+    // hook and report 3 instead of null).
+    _resetExternalMemoryForTests();
 });
 
 describe("sidebar snapshot RPC failures", () => {
@@ -295,7 +305,7 @@ describe("buildSidebarSnapshot — Rust module status merge", () => {
 });
 
 describe("compaction-off sidebar RPC data", () => {
-    test("reports the resolved mode and raw native usage independently of threshold fill", () => {
+    test("reports the resolved mode and raw native usage independently of threshold fill", async () => {
         const db = createTestDb();
         try {
             const sessionId = "ses-native-sidebar";
@@ -337,7 +347,7 @@ describe("compaction-off sidebar RPC data", () => {
                 },
                 false,
             );
-            const detail = buildStatusDetail(
+            const detail = await buildStatusDetail(
                 db,
                 sessionId,
                 process.cwd(),
@@ -364,7 +374,7 @@ describe("compaction-off sidebar RPC data", () => {
             );
             expect(snapshot.archivedCompartmentCount).toBe(1);
 
-            const enabledDetail = buildStatusDetail(db, "ses-native-sidebar-on", process.cwd());
+            const enabledDetail = await buildStatusDetail(db, "ses-native-sidebar-on", process.cwd());
             expect(enabledDetail.compaction_enabled).toBe(true);
         } finally {
             closeQuietly(db);
@@ -373,7 +383,7 @@ describe("compaction-off sidebar RPC data", () => {
 });
 
 describe("buildStatusDetail — history token reuse (council audit bg_51106601 #1)", () => {
-    test("sets historyBlockTokens from compartmentTokens only (facts retired in v2)", () => {
+    test("sets historyBlockTokens from compartmentTokens only (facts retired in v2)", async () => {
         const db = createTestDb();
         try {
             const sessionId = "ses-status-history-tokens";
@@ -414,7 +424,7 @@ describe("buildStatusDetail — history token reuse (council audit bg_51106601 #
                 ],
             );
 
-            const detail = buildStatusDetail(db, sessionId, directory);
+            const detail = await buildStatusDetail(db, sessionId, directory);
 
             // v2: facts are retired as a render source (promoted to memories), so
             // factTokens is 0 and the history block is compartments only — facts
@@ -429,10 +439,10 @@ describe("buildStatusDetail — history token reuse (council audit bg_51106601 #
 });
 
 describe("buildStatusDetail — storage versions probe", () => {
-    test("reports the live context.db schema version and the plugin fence", () => {
+    test("reports the live context.db schema version and the plugin fence", async () => {
         const db = createTestDb();
         try {
-            const detail = buildStatusDetail(db, "ses-storage-versions", process.cwd());
+            const detail = await buildStatusDetail(db, "ses-storage-versions", process.cwd());
 
             // The probe must carry the live MAX(schema_migrations) value, not a
             // hardcoded one, plus this build's fence. A fully migrated test DB sits
@@ -449,14 +459,14 @@ describe("buildStatusDetail — storage versions probe", () => {
         }
     });
 
-    test("follows an older live DB version while the fence stays put", () => {
+    test("follows an older live DB version while the fence stays put", async () => {
         const db = createTestDb();
         try {
             // Simulate a DB migrated by an older plugin: drop the recorded versions
             // above 50. The probe must follow the live value down.
             db.prepare("DELETE FROM schema_migrations WHERE version > ?").run(50);
 
-            const detail = buildStatusDetail(db, "ses-storage-versions-old", process.cwd());
+            const detail = await buildStatusDetail(db, "ses-storage-versions-old", process.cwd());
 
             expect(detail.storage_versions.context_db_schema_version).toBe(50);
             expect(detail.storage_versions.plugin_supported_version).toBe(LATEST_SUPPORTED_VERSION);
@@ -578,6 +588,108 @@ describe("buildStatusDetail — skill memory section", () => {
             expect(detail.skillMemory?.totalNotes).toBe(0);
             expect(detail.skillMemory?.skillsWithNotes).toBe(0);
             expect(detail.skillMemory?.pinnedNotes).toBe(0);
+        } finally {
+            closeQuietly(db);
+        }
+    });
+});
+
+describe("buildStatusDetail — external memory section", () => {
+    test("provider off → externalMemory is null", async () => {
+        const db = createTestDb();
+        try {
+            const sessionId = "ses-status-ext-off";
+            db.prepare(
+                "INSERT INTO session_meta (session_id, last_input_tokens, last_context_percentage) VALUES (?, 0, 0)",
+            ).run(sessionId);
+            initializeExternalMemory({ provider: "off" });
+            const detail = await buildStatusDetail(db, sessionId, process.cwd());
+            expect(detail.externalMemory).toBeNull();
+        } finally {
+            closeQuietly(db);
+        }
+    });
+
+    test("provider on, fake backend exposes fetchFailedRetainCount → detail surfaces the count", async () => {
+        const db = createTestDb();
+        try {
+            const sessionId = "ses-status-ext-on";
+            db.prepare(
+                "INSERT INTO session_meta (session_id, last_input_tokens, last_context_percentage) VALUES (?, 0, 0)",
+            ).run(sessionId);
+            _setTestExternalBackendFactory(() => ({
+                backendId: "fake:ext-status",
+                initialize: async () => true,
+                retain: async () => 0,
+                dispose: async () => {},
+                _getCircuitState: () => "closed",
+                fetchFailedRetainCount: async () => 3,
+            }));
+            initializeExternalMemory({
+                provider: "hindsight",
+                endpoint: "http://10.0.0.1:8889",
+                project_bank: "mc-{name}-{id8}",
+                main_bank: "main-memory",
+                retain_sources: ["historian", "agent", "dreamer"],
+                tags: ["user:test"],
+                recall: {
+                    enabled: true,
+                    timeout_ms: 3000,
+                    max_tokens: 2048,
+                    dedup_threshold: 0.85,
+                    global_tags: ["user:test"],
+                    global_from_prompt: false,
+                    search: true,
+                    mental_models: true,
+                    profile_mental_models: ["user-preferences"],
+                },
+            });
+            const detail = await buildStatusDetail(db, sessionId, process.cwd());
+            expect(detail.externalMemory).not.toBeNull();
+            expect(detail.externalMemory?.provider).toBe("hindsight");
+            expect(detail.externalMemory?.endpoint).toBe("http://10.0.0.1:8889");
+            expect(detail.externalMemory?.circuitState).toBe("closed");
+            expect(detail.externalMemory?.failedRetainCount).toBe(3);
+        } finally {
+            closeQuietly(db);
+        }
+    });
+
+    test("provider on, backend has no fetchFailedRetainCount hook → failedRetainCount null", async () => {
+        const db = createTestDb();
+        try {
+            const sessionId = "ses-status-ext-noop";
+            db.prepare(
+                "INSERT INTO session_meta (session_id, last_input_tokens, last_context_percentage) VALUES (?, 0, 0)",
+            ).run(sessionId);
+            _setTestExternalBackendFactory(() => ({
+                backendId: "fake:ext-noop",
+                initialize: async () => true,
+                retain: async () => 0,
+                dispose: async () => {},
+            }));
+            initializeExternalMemory({
+                provider: "hindsight",
+                endpoint: "http://10.0.0.1:8889",
+                project_bank: "mc-{name}-{id8}",
+                main_bank: "main-memory",
+                retain_sources: ["historian", "agent", "dreamer"],
+                tags: ["user:test"],
+                recall: {
+                    enabled: true,
+                    timeout_ms: 3000,
+                    max_tokens: 2048,
+                    dedup_threshold: 0.85,
+                    global_tags: ["user:test"],
+                    global_from_prompt: false,
+                    search: true,
+                    mental_models: true,
+                    profile_mental_models: ["user-preferences"],
+                },
+            });
+            const detail = await buildStatusDetail(db, sessionId, process.cwd());
+            expect(detail.externalMemory).not.toBeNull();
+            expect(detail.externalMemory?.failedRetainCount).toBeNull();
         } finally {
             closeQuietly(db);
         }

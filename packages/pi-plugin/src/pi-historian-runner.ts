@@ -38,6 +38,7 @@
  */
 
 import * as crypto from "node:crypto";
+import { basename } from "node:path";
 import { withContentLanguageDirective } from "@magic-context/core/agents/language-directive";
 import { embedAndStoreCompartmentChunks } from "@magic-context/core/features/magic-context/compartment-embedding";
 import { insertCompartmentEvents } from "@magic-context/core/features/magic-context/compartment-events";
@@ -46,6 +47,7 @@ import {
 	appendCompartments,
 	getCompartments,
 } from "@magic-context/core/features/magic-context/compartment-storage";
+import type { PromotedMemoryRef } from "@magic-context/core/features/magic-context/memory";
 import {
 	embedPromotedFacts,
 	promoteSessionFactsDurable,
@@ -1139,7 +1141,7 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 					return false;
 				return true;
 			});
-			let promotedFactRefs: Array<{ memoryId: number; content: string }> = [];
+			let promotedFactRefs: PromotedMemoryRef[] = [];
 			let persistedIds: number[] = [];
 
 			// Atomic publication: append + durable facts/events/drop queue + clear failure state.
@@ -1399,6 +1401,7 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 							sessionId,
 							projectPath,
 							promotedFactRefs,
+							{ projectName: basename(directory) },
 						);
 					} catch (error) {
 						sessionLog(
