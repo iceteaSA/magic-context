@@ -302,10 +302,17 @@ describe("storage-db", () => {
             const reopened = openDatabase();
             expect(reopened).not.toBeNull();
             expect(readPersistedVersion(resolveDbPath(dataHome))).toBe(LATEST_SUPPORTED_VERSION);
+            // Assert the two hand-inserted downstream rows SURVIVED, rather than
+            // that they are the only downstream rows. A total count breaks for any
+            // fork that actually uses the lane (this one owns v10100), which is the
+            // feature's whole purpose — upstream's version passes only because
+            // upstream itself ships no fork migrations.
             expect(
                 reopened
-                    ?.prepare("SELECT COUNT(*) AS count FROM schema_migrations WHERE version >= ?")
-                    .get(FORK_MIGRATION_VERSION_FLOOR),
+                    ?.prepare(
+                        "SELECT COUNT(*) AS count FROM schema_migrations WHERE version IN (?, ?)",
+                    )
+                    .get(FORK_MIGRATION_VERSION_FLOOR, FORK_MIGRATION_VERSION_FLOOR + 1),
             ).toEqual({ count: 2 });
         });
 

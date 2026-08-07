@@ -21,7 +21,10 @@ export const FORK_MIGRATION_VERSION_FLOOR = 10_000;
  * 3. The migration runs in a transaction — if it throws, it rolls back
  */
 
-interface Migration {
+// Exported for the downstream-lane runner in fork-migrations.ts. Fork migrations
+// live in their own array so upstream's MIGRATIONS literal (and the tests and
+// fence constant derived from it) stay byte-identical to upstream.
+export interface Migration {
     version: number;
     description: string;
     up: (db: Database) => void;
@@ -36,7 +39,9 @@ export class MigrationLockBusyError extends Error {
     }
 }
 
-function isSqliteLockError(error: unknown): boolean {
+// Exported for the downstream-lane runner in fork-migrations.ts, which needs the
+// same lock-error classification to raise MigrationLockBusyError consistently.
+export function isSqliteLockError(error: unknown): boolean {
     if (!error || typeof error !== "object") return false;
     const candidate = error as { code?: unknown; message?: unknown };
     if (candidate.code === "SQLITE_BUSY" || candidate.code === "SQLITE_LOCKED") return true;
@@ -2047,35 +2052,7 @@ export const MIGRATIONS: Migration[] = [
                     last_active_at INTEGER NOT NULL,
                     PRIMARY KEY(project_path, scope, model_id)
                 );
-                `);
-        },
-    },
-    {
-        // External memory v2: session recall snapshot + m[0] recall marker.
-        // Renumbered across many upstream rebases (v31→33→37→38→39→42); now v50
-        // after upstream v0.27 occupied through v49. The body is
-        // ensureColumn-idempotent, so a dev DB that already ran it under an old
-        // number re-applies harmlessly.
-        version: 50,
-        description: "External memory v2: session recall snapshot + m[0] recall marker",
-        up: (db: Database) => {
-            // session_meta existence guard — see v30's comment (partial test fixtures).
-            const hasSessionMeta = db
-                .prepare(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='session_meta' LIMIT 1",
-                )
-                .get();
-            if (!hasSessionMeta) return;
-            // Per-session external recall snapshot (post-dedup, post-trim) — the
-            // frozen content every render replays for byte stability.
-            ensureColumn(db, "session_meta", "external_recall_json", "TEXT");
-            ensureColumn(db, "session_meta", "external_recall_state", "TEXT");
-            ensureColumn(db, "session_meta", "external_recall_at", "INTEGER");
-            // m[0] marker: hash of the external content baked into the cached m[0]
-            // ('' = none). NOT a mustMaterialize trigger — drives only the m[1]
-            // <external-memory> delta comparison. No cache-clear needed: the
-            // cachedRowMatchesState comparison normalizes NULL and '' to equal.
-            ensureColumn(db, "session_meta", "cached_m0_external_recall_hash", "TEXT");
+            `);
         },
     },
     {

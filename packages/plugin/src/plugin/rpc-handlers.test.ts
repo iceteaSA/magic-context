@@ -57,7 +57,9 @@ describe("sidebar snapshot RPC failures", () => {
 });
 
 describe("buildStatusDetail — storage version probe", () => {
-    test("reports the upstream lane when fork rows share context.db", () => {
+    // async because this fork makes buildStatusDetail async (external-memory status
+    // needs a DB read); upstream's version of this test is synchronous.
+    test("reports the upstream lane when fork rows share context.db", async () => {
         const db = createTestDb();
         try {
             db.prepare(
@@ -71,7 +73,7 @@ describe("buildStatusDetail — storage version probe", () => {
                 0,
             );
 
-            const detail = buildStatusDetail(db, "ses-storage-version", process.cwd());
+            const detail = await buildStatusDetail(db, "ses-storage-version", process.cwd());
 
             expect(detail.storage_versions).toEqual({
                 context_db_schema_version: LATEST_SUPPORTED_VERSION,
