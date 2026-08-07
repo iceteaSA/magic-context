@@ -3,7 +3,8 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "../../shared/sqlite";
 import { closeQuietly } from "../../shared/sqlite-helpers";
-import { LATEST_MIGRATION_VERSION, runMigrations } from "./migrations";
+import { LATEST_FORK_MIGRATION_VERSION, runForkMigrations } from "./fork-migrations";
+import { runMigrations } from "./migrations";
 import { initializeDatabase } from "./storage-db";
 
 function columnNames(db: Database, table: string): string[] {
@@ -12,13 +13,15 @@ function columnNames(db: Database, table: string): string[] {
     );
 }
 
-describe("migration v75 — external recall snapshot + m[0] marker", () => {
+describe("migration v10100 (fork lane) — external recall snapshot + m[0] marker", () => {
     test("adds external recall columns to session_meta on a fresh DB, idempotently", () => {
         const db = new Database(":memory:");
         try {
             initializeDatabase(db);
             runMigrations(db);
+            runForkMigrations(db);
             runMigrations(db);
+            runForkMigrations(db);
 
             const columns = columnNames(db, "session_meta");
             expect(columns).toContain("external_recall_json");
@@ -29,7 +32,7 @@ describe("migration v75 — external recall snapshot + m[0] marker", () => {
                 db
                     .prepare("SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1")
                     .get(),
-            ).toEqual({ version: LATEST_MIGRATION_VERSION });
+            ).toEqual({ version: LATEST_FORK_MIGRATION_VERSION });
         } finally {
             closeQuietly(db);
         }
@@ -40,6 +43,7 @@ describe("migration v75 — external recall snapshot + m[0] marker", () => {
         try {
             initializeDatabase(db);
             runMigrations(db);
+            runForkMigrations(db);
 
             db.prepare("INSERT INTO session_meta (session_id, harness) VALUES (?, ?)").run(
                 "ses_v39",
