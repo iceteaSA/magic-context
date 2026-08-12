@@ -193,6 +193,7 @@ describe("external recall in m[0]/m[1]", () => {
             projectPath: PROJECT_PATH,
             projectDirectory,
             hardSignals: BASE_HARD,
+            historyBudgetTokens: 98_000,
         });
         // Settled recall alone does NOT flip mustMaterialize — late recall rides m[1].
         expect(decision.value).toBe(false);
