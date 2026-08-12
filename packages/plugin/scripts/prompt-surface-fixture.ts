@@ -13,8 +13,18 @@ import {
 } from "./prompt-surface-measurement";
 import { ACTIVE_TOOL_IDS } from "../src/shared/prompt-surface-runtime";
 
-export const RATIFIED_FULL_MUTABLE_PROSE_CEILING = 3650;
-export const RATIFIED_LIGHT_MUTABLE_PROSE_CEILING = 1825;
+// DOWNSTREAM DEVIATION (fork only). Upstream ratified 3650/1825 against its own
+// tool surface. This fork widens two existing tools -- ctx_memory gains
+// scope:"global" and ctx_search gains the "external" source -- so the measured
+// baseline is 3756. It adds NO tools and changes NO guidance prose (the
+// section-3 hash table still reproduces upstream's MD5s byte-for-byte), so the
+// entire delta is those two descriptions and their schemas. The literals are
+// re-derived with upstream's UNCHANGED policy: ceiling = floor(0.50 * measured
+// baseline). Policy, tokenizer, primary variant, and the inclusion/exclusion
+// lists are untouched -- only the measurement moved. See the "downstreamNote" in
+// docs/specs/prompt-surface/budget-fixture.json for the full accounting.
+export const RATIFIED_FULL_MUTABLE_PROSE_CEILING = 3756;
+export const RATIFIED_LIGHT_MUTABLE_PROSE_CEILING = 1878;
 
 const DEFAULT_CC_LIGHT_ASSET_PATHS = [
     resolve(import.meta.dir, "../../../crates/mc-module/assets/guidance_light_primary.txt"),
