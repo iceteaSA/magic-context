@@ -86,7 +86,7 @@ describe("createToolRegistry — memory gating", () => {
                 "note_id",
             ],
             ctx_search: ["query", "limit", "sources"],
-            ctx_memory: ["action", "content", "category", "ids", "limit", "reason"],
+            ctx_memory: ["action", "content", "category", "ids", "limit", "reason", "scope"],
         };
 
         for (const [name, fields] of Object.entries(expectedFields)) {

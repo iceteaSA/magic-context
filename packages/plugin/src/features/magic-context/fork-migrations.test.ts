@@ -144,13 +144,12 @@ describe("fork migration lane", () => {
             [...FORK_MIGRATIONS].map((m) => m.version).sort((a, b) => a - b),
         );
 
-        // And the fork migrations' actual DDL landed, not just their bookkeeping rows.
+        // And the fork migration's actual DDL landed, not just its bookkeeping row.
         const columns = (
-            db?.prepare("PRAGMA table_info(skill_memory)").all() as Array<{ name: string }>
+            db?.prepare("PRAGMA table_info(session_meta)").all() as Array<{ name: string }>
         ).map((c) => c.name);
-        expect(columns).toContain("normalized_hash"); // P1 (10000)
-        expect(columns).toContain("delta_embedding"); // P2 (10001)
-        expect(columns).toContain("source_type"); // P3a (10002)
+        expect(columns).toContain("external_recall_json");
+        expect(columns).toContain("cached_m0_external_recall_hash");
     });
 
     test("fork rows do not advance the upstream watermark", () => {

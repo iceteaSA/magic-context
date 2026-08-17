@@ -26,6 +26,12 @@
  */
 
 import {
+	computeRecallSnapshotHash,
+	type ExternalRecallSnapshot,
+	readExternalRecallHash,
+	readExternalRecallSnapshot,
+} from "@magic-context/core/features/magic-context/memory/external-recall-read";
+import {
 	getMaxMemoryIdForProjects,
 	getMemoriesByProject,
 	getMemoriesByProjects,
@@ -75,6 +81,8 @@ import {
 	DEFAULT_MEMORY_BUDGET_TOKENS,
 	DEFAULT_USER_PROFILE_BUDGET_TOKENS,
 	type MemoryRenderOptions,
+	renderExternalMemoryBlock,
+	renderExternalMemoryDelta,
 	renderMemoryBlockV2,
 	stripMemoryMuralBlock,
 	trimMemoriesToBudgetV2,
@@ -324,6 +332,8 @@ interface FrozenM0Inputs {
 	memories: Memory[];
 	userProfile: UserMemory[];
 	workspace: WorkspaceRenderContext;
+	/** External recall snapshot baked into m[0], or null when none/pending. */
+	externalRecall: ExternalRecallSnapshot | null;
 }
 
 /**
@@ -508,6 +518,11 @@ export interface PiM0SnapshotMarkers {
 	projectIdentity: string | null;
 	muralEnabled: boolean;
 	renderBudgetIdentity: string;
+	/** Hash of the persisted external-recall snapshot baked into m[0] ('' = none).
+	 *  NOT a HARD bust trigger (external recall is not a materialization driver) —
+	 *  drives the m[1] <external-memory> delta comparison only. Mirrors OpenCode
+	 *  M0SnapshotMarkers.externalRecallHash. */
+	externalRecallHash: string;
 }
 
 /**
@@ -858,6 +873,7 @@ function getCachedMarkers(
 		projectIdentity: meta.cachedM0ProjectIdentity ?? null,
 		muralEnabled: cachedUpgradeIdentity.muralEnabled ?? false,
 		renderBudgetIdentity: cachedUpgradeIdentity.renderBudgetIdentity ?? "",
+		externalRecallHash: meta.cachedM0ExternalRecallHash ?? "",
 	};
 }
 
@@ -952,6 +968,11 @@ function readCurrentMarkersFromCompartments(
 		projectIdentity: state.projectIdentity,
 		muralEnabled: state.muralEnabled === true,
 		renderBudgetIdentity: renderBudgetIdentityPi(state),
+		// externalRecallHash is NOT a mustMaterializePi trigger — it rides the
+		// m[1] external delta only. Mirrors OpenCode M0SnapshotMarkers comment.
+		// Read the live hash here for marker capture; materializeM0Pi overrides
+		// it from the in-transaction read (TOCTOU-safe, same as projectDocsHash).
+		externalRecallHash: readExternalRecallHash(db, state.sessionId),
 	};
 }
 
@@ -1149,12 +1170,18 @@ function renderUserProfileBlock(
 	db: ContextDatabase,
 	wrapper = "user-profile",
 	memoriesOverride?: UserMemory[],
+	externalProfileLines: readonly { content: string }[] = [],
 ): string {
 	const memories = memoriesOverride ?? safeGetActiveUserMemoriesPi(db);
-	if (memories.length === 0) return "";
-	return `<${wrapper}>\n${memories
-		.map((memory) => `- ${escapeXmlContent(memory.content)}`)
-		.join("\n")}\n</${wrapper}>`;
+	const localLines = memories.map(
+		(memory) => `- ${escapeXmlContent(memory.content)}`,
+	);
+	const externalLines = externalProfileLines.map(
+		(item) => `- ${escapeXmlContent(item.content)}`,
+	);
+	const allLines = [...localLines, ...externalLines];
+	if (allLines.length === 0) return "";
+	return `<${wrapper}>\n${allLines.join("\n")}\n</${wrapper}>`;
 }
 
 export function renderM0Pi(
@@ -1174,6 +1201,8 @@ export function renderM0Pi(
 	/** Optional mural wire options (HARD fold only). When vision-capable, emits
 	 *  the `<memory-mural>` marker block; the PNG rides as a separate image part. */
 	mural?: { enabled: boolean; supportsVision: boolean; dataUrl?: string },
+	/** External recall snapshot to bake into m[0]. Null = no external block. */
+	externalRecallOverride?: ExternalRecallSnapshot | null,
 ): string {
 	const memPath = memoryProjectPath(state);
 	const workspace =
@@ -1262,10 +1291,13 @@ export function renderM0Pi(
 		userProfileOverride ?? safeGetActiveUserMemoriesPi(db),
 		state.userProfileBudgetTokens ?? DEFAULT_USER_PROFILE_BUDGET_TOKENS,
 	);
+	// Merge external profile slice into <user-profile> (mirrors OpenCode renderM0:
+	// renderUserProfileBlock(trimmedProfile, "user-profile", externalRecall?.profile ?? [])).
 	const userProfile = renderUserProfileBlock(
 		db,
 		"user-profile",
 		trimmedProfile,
+		externalRecallOverride?.profile ?? [],
 	);
 	if (userProfile.length > 0) sections.push(userProfile);
 	if (!state.compactionOff) {
@@ -1281,6 +1313,11 @@ export function renderM0Pi(
 		sections.push(
 			"<memory-mural>\nThe project memory mural image follows.\n</memory-mural>",
 		);
+	}
+	// Render external memory block after <project-memory> (mirrors OpenCode renderM0).
+	if (externalRecallOverride) {
+		const externalBlock = renderExternalMemoryBlock(externalRecallOverride);
+		if (externalBlock) sections.push(externalBlock);
 	}
 	return sections.join("\n\n").trim();
 }
@@ -1380,6 +1417,13 @@ function readFrozenM0InputsPi(
 		const userProfile = safeGetActiveUserMemoriesPi(db);
 		const projectState = memPath ? getProjectState(db, memPath) : undefined;
 		const globalState = getProjectState(db, GLOBAL_USER_PROFILE_PROJECT_PATH);
+		// In-transaction read of the persisted external recall snapshot. Overrides
+		// the externalRecallHash set in readCurrentMarkersFromCompartments so render
+		// and marker derive from the SAME read (no TOCTOU) — mirrors how
+		// projectDocsHash is overwritten from readProjectDocsCanonical in OpenCode.
+		const recallRead = readExternalRecallSnapshot(db, state.sessionId);
+		const externalRecall =
+			recallRead.state === "done" ? recallRead.snapshot : null;
 		const markers: PiM0SnapshotMarkers = {
 			maxCompartmentSeq: compartments.reduce(
 				(max, compartment) =>
@@ -1425,8 +1469,17 @@ function readFrozenM0InputsPi(
 			projectIdentity: state.projectIdentity,
 			muralEnabled: state.muralEnabled === true,
 			renderBudgetIdentity: renderBudgetIdentityPi(state),
+			externalRecallHash: computeRecallSnapshotHash(externalRecall),
 		};
-		return { docs, markers, compartments, memories, userProfile, workspace };
+		return {
+			docs,
+			markers,
+			compartments,
+			memories,
+			userProfile,
+			workspace,
+			externalRecall,
+		};
 	});
 	return read();
 }
@@ -1471,6 +1524,7 @@ function renderFreshM0PiNonPersisted(
 		frozen.userProfile,
 		frozen.workspace,
 		mural,
+		frozen.externalRecall,
 	);
 	let attempts = 0;
 	while (
@@ -1489,6 +1543,7 @@ function renderFreshM0PiNonPersisted(
 			frozen.userProfile,
 			frozen.workspace,
 			mural,
+			frozen.externalRecall,
 		);
 		attempts += 1;
 	}
@@ -1548,6 +1603,7 @@ export function materializeM0Pi(
 	// rendered m[0] exceeds the history budget, escalate the decay pressure and
 	// re-render up to 3x so tight budgets demote more aggressively. Without this,
 	// Pi would select different (looser) tiers than OpenCode under budget pressure.
+	const snapshotExternalRecall = frozen.externalRecall;
 	let decayPressureMultiplier = 1;
 	let m0 = renderM0Pi(
 		state,
@@ -1559,6 +1615,7 @@ export function materializeM0Pi(
 		snapshotUserProfile,
 		frozen.workspace,
 		mural,
+		snapshotExternalRecall,
 	);
 	const historyBudget =
 		state.historyBudgetTokens ?? DEFAULT_HISTORY_BUDGET_TOKENS;
@@ -1579,6 +1636,7 @@ export function materializeM0Pi(
 			snapshotUserProfile,
 			frozen.workspace,
 			mural,
+			snapshotExternalRecall,
 		);
 		attempts += 1;
 	}
@@ -1661,6 +1719,10 @@ export function materializeM0Pi(
 			systemHash: snapshotMarkers.systemHash,
 			modelKey: snapshotMarkers.modelKey,
 			projectIdentity: snapshotMarkers.projectIdentity,
+			// Persist the external recall hash so the next pass can compare it
+			// against the live hash for the m[1] delta check. NOT a hard-bust
+			// trigger — rides the m[1] external delta only.
+			externalRecallHash: snapshotMarkers.externalRecallHash,
 		});
 		// Persist the rendered-memory identity in the SAME transaction as the m[0]
 		// snapshot (parity with OpenCode materializeM0). `memory_block_ids` /
@@ -1823,6 +1885,14 @@ function renderMemoryUpdatesBlockPi(args: {
 interface RenderM1PiResult {
 	text: string;
 	memoryUpdateCount: number;
+	/** The <external-memory> delta block (late-arrival snapshot) when present,
+	 *  "" otherwise. Excluded from the injectM0M1Pi pressure-refold token math
+	 *  so a large recall can NEVER cause an m[0] refold (parity with OpenCode). */
+	externalDeltaText: string;
+	/** True when freshly rendered from current DB state. False when replayed
+	 *  from a sibling-adoption row. The pressure-refold backstop must only fire
+	 *  on recomputed bytes (parity with OpenCode RenderM1Result.recomputed). */
+	recomputed: boolean;
 }
 
 function renderM1PiWithMetadata(
@@ -1943,10 +2013,35 @@ function renderM1PiWithMetadata(
 		if (profileBlock) sections.push(profileBlock);
 	}
 
+	// External memory delta: when the live recall hash differs from the m[0]
+	// baseline hash, surface the current recall snapshot as a delta. Mirrors
+	// OpenCode renderM1WithMetadata's renderExternalMemoryDelta path. The delta
+	// carries ALL slices including profile (profile lines reconcile into
+	// <user-profile> at the next HARD fold). Captured separately so the caller
+	// can subtract its tokens from the pressure-refold math — recall is NOT a
+	// bust trigger (parity with OpenCode RenderM1Result.externalDeltaText).
+	let externalDeltaText = "";
+	const recallRead = readExternalRecallSnapshot(db, state.sessionId);
+	if (recallRead.state === "done" && recallRead.snapshot) {
+		const currentRecallHash = computeRecallSnapshotHash(recallRead.snapshot);
+		if (
+			currentRecallHash !== "" &&
+			currentRecallHash !== markers.externalRecallHash
+		) {
+			const delta = renderExternalMemoryDelta(recallRead.snapshot);
+			if (delta) {
+				externalDeltaText = delta;
+				sections.push(delta);
+			}
+		}
+	}
+
 	if (sections.length === 0) {
 		return {
 			text: PI_M1_PLACEHOLDER,
 			memoryUpdateCount: memoryUpdates.count,
+			externalDeltaText: "",
+			recomputed: true,
 		};
 	}
 	// Join with "\n" (single newline) to match OpenCode renderM1 exactly — the
@@ -1956,6 +2051,8 @@ function renderM1PiWithMetadata(
 			? `<knowledge-updates>\n${sections.join("\n")}\n</knowledge-updates>`
 			: `<session-history-since>\n${sections.join("\n")}\n</session-history-since>`,
 		memoryUpdateCount: memoryUpdates.count,
+		externalDeltaText,
+		recomputed: true,
 	};
 }
 
@@ -1987,6 +2084,7 @@ interface CachedPiM0M1Row {
 	cached_m0_system_hash: string | null;
 	cached_m0_model_key: string | null;
 	cached_m0_project_identity: string | null;
+	cached_m0_external_recall_hash: string | null;
 	cached_m0_last_baseline_end_message_id: string | null;
 	memory_block_ids: string | null;
 }
@@ -2038,6 +2136,7 @@ function readCachedPiM0M1Row(
 					cached_m0_system_hash,
 					cached_m0_model_key,
 					cached_m0_project_identity,
+					cached_m0_external_recall_hash,
 					cached_m0_last_baseline_end_message_id,
 					memory_block_ids
 			   FROM session_meta
@@ -2089,6 +2188,7 @@ function markersFromCachedPiRow(
 		projectIdentity: row.cached_m0_project_identity ?? null,
 		muralEnabled: cachedUpgradeIdentity.muralEnabled ?? false,
 		renderBudgetIdentity: cachedUpgradeIdentity.renderBudgetIdentity ?? "",
+		externalRecallHash: row.cached_m0_external_recall_hash ?? "",
 	};
 }
 
@@ -2209,6 +2309,7 @@ function softRefreshCachedM1Pi(args: {
 	markers: PiM0SnapshotMarkers;
 	memoryUpdateCount: number;
 	recomputed: boolean;
+	externalDeltaText: string;
 } {
 	args.db.exec("BEGIN IMMEDIATE");
 	try {
@@ -2241,6 +2342,11 @@ function softRefreshCachedM1Pi(args: {
 				}),
 				memoryUpdateCount: 0,
 				recomputed: false,
+				// Sibling-adoption replay: the bytes are persisted, not freshly
+				// rendered. The external delta is unknown from the persisted row;
+				// use "" so the pressure backstop (which only fires on recomputed
+				// bytes) is never triggered by a replayed sibling m[1].
+				externalDeltaText: "",
 			};
 		}
 
@@ -2292,6 +2398,7 @@ function softRefreshCachedM1Pi(args: {
 			markers: { ...markers, lastBaselineEndMessageId: advancedBoundary },
 			memoryUpdateCount: rendered.memoryUpdateCount,
 			recomputed: true,
+			externalDeltaText: rendered.externalDeltaText,
 		};
 	} catch (error) {
 		try {
@@ -2389,6 +2496,10 @@ export function injectM0M1Pi(
 	let memoryUpdateCount = 0;
 	let m1Recomputed = false;
 	let freshFallbackRenderedMemoryIds: number[] | null = null;
+	// Tracks the external-recall delta text from the freshly rendered m[1] so
+	// the pressure backstop can subtract its tokens — recall must NEVER cause a
+	// fold (parity with OpenCode injectM0M1 externalDeltaText subtraction).
+	let m1ExternalDeltaText = "";
 
 	if (decision.value) {
 		// On contention exhaustion, reuse the cached m[0]/m[1] pair rather than
@@ -2492,6 +2603,7 @@ export function injectM0M1Pi(
 		m1 = freshM1.text;
 		memoryUpdateCount = freshM1.memoryUpdateCount;
 		m1Recomputed = true;
+		m1ExternalDeltaText = freshM1.externalDeltaText;
 	} else if (contentionExhausted) {
 		// m[1] was replayed with the cached m[0] pair above.
 	} else if (recomputeM1ThisPass) {
@@ -2507,6 +2619,7 @@ export function injectM0M1Pi(
 		markers = refreshed.markers;
 		memoryUpdateCount = refreshed.memoryUpdateCount;
 		m1Recomputed = refreshed.recomputed;
+		m1ExternalDeltaText = refreshed.externalDeltaText;
 	} else {
 		const replayed = replayCachedM1Pi(db, state, currentCompartments);
 		m0 = replayed.m0;
@@ -2527,6 +2640,15 @@ export function injectM0M1Pi(
 	// Token counts (NOT char lengths) on both sides of the ratio — parity with
 	// OpenCode. The documented intent is "m[1] exceeds ~15% of m[0] tokens";
 	// char length diverges from token count on XML-heavy / non-Latin content.
+	//
+	// External recall content must NEVER CAUSE a fold (spec: not a bust trigger);
+	// it rides along when a fold fires for other reasons. Two layers of
+	// subtraction from m1Tokens: the delta itself (late recall) AND a small
+	// wrapper overhead (every m[1] carries the wrapper, empty or not — not a
+	// drift signal). The wrapper tokens are also subtracted from the absolute
+	// cap budget for symmetry, so a tiny m[0] baseline (where the wrapper
+	// alone would exceed the cap) does not falsely fire a refold when the
+	// only m[1] content is the recall delta. (Parity with OpenCode injectM0M1.)
 	const M0_DRIFT_RATIO_FLOOR_TOKENS = 500;
 	const M1_DRIFT_RATIO = 0.15;
 	const M1_ABSOLUTE_CAP_RATIO = 0.2;
@@ -2539,7 +2661,24 @@ export function injectM0M1Pi(
 		m0,
 		m1,
 	);
-	const m1OverAbsoluteCap = m1HasContent && m1Tokens > m1AbsoluteBudget;
+	// External-memory delta must NEVER cause a pressure refold (cache parity
+	// with OpenCode injectM0M1): subtract the late `<external-memory>` delta and
+	// the m[1] wrapper overhead from the pressure comparison so a large recall
+	// arriving after m[0] materialization does not fold into the baseline.
+	const M1_PRESSURE_WRAPPER_TOKENS = 20;
+	const externalDeltaTokens = m1ExternalDeltaText
+		? estimateTokens(m1ExternalDeltaText)
+		: 0;
+	const m1PressureTokens = Math.max(
+		0,
+		m1Tokens - externalDeltaTokens - M1_PRESSURE_WRAPPER_TOKENS,
+	);
+	const m1AbsoluteContentBudget = Math.max(
+		0,
+		m1AbsoluteBudget - M1_PRESSURE_WRAPPER_TOKENS,
+	);
+	const m1OverAbsoluteCap =
+		m1HasContent && m1PressureTokens > m1AbsoluteContentBudget;
 	if (
 		!materialized &&
 		!contentionExhausted &&
@@ -2549,7 +2688,7 @@ export function injectM0M1Pi(
 			m1OverAbsoluteCap ||
 			(m1HasContent &&
 				m0Tokens >= M0_DRIFT_RATIO_FLOOR_TOKENS &&
-				m1Tokens > m0Tokens * M1_DRIFT_RATIO))
+				m1PressureTokens > m0Tokens * M1_DRIFT_RATIO))
 	) {
 		decision = { value: true, reason: "drift" };
 		try {

@@ -13,19 +13,23 @@ import {
 } from "./prompt-surface-measurement";
 import { ACTIVE_TOOL_IDS } from "../src/shared/prompt-surface-runtime";
 
-// DOWNSTREAM DEVIATION (fork only). Upstream ratified 3650/1825 against its
-// 5-tool surface. This fork registers two more (ctx_skill_note,
-// ctx_skill_recall), so the measured baseline is 4087 -- 437 above upstream's
-// figure, of which 146 is the two tool descriptions and 291 the skill-memory
-// guidance block. Fitting under 3650 would mean shipping the feature with no
-// prompt surface at all, so the literals are re-derived here with upstream's
-// UNCHANGED policy: ceiling = floor(0.50 * measured baseline). Policy,
-// tokenizer, primary variant, and inclusion/exclusion lists are untouched --
-// only the measurement moved. Ratifying the larger surface is upstream's call
-// if these tools ever land there; see docs/specs/prompt-surface/budget-fixture.json
-// ("downstreamNote") for the full accounting.
-export const RATIFIED_FULL_MUTABLE_PROSE_CEILING = 4087;
-export const RATIFIED_LIGHT_MUTABLE_PROSE_CEILING = 2043;
+// DOWNSTREAM DEVIATION (fork only, UNION branch). Upstream ratified 3650/1825
+// against its own tool surface. This branch carries BOTH fork features, so it
+// carries both deltas:
+//   +437  skill-memory: two new tools (ctx_skill_note, ctx_skill_recall) at 146
+//         tokens of description, plus a 291-token guidance block.
+//   +106  external memory: no new tools, no new guidance prose -- ctx_memory
+//         gains scope:"global" and ctx_search gains the "external" source, so
+//         the delta is entirely those two widened descriptions/schemas.
+// Neither single-feature literal (4087 skill-only, 3756 external-only) is
+// correct here; the union measures 4193. Fitting under 3650 would mean shipping
+// skill-memory with no prompt surface at all, so the literals are re-derived
+// with upstream's UNCHANGED policy: ceiling = floor(0.50 * measured baseline).
+// Policy, tokenizer, primary variant, and the inclusion/exclusion lists are
+// untouched -- only the measurement moved. See the "downstreamNote" in
+// docs/specs/prompt-surface/budget-fixture.json for the full accounting.
+export const RATIFIED_FULL_MUTABLE_PROSE_CEILING = 4193;
+export const RATIFIED_LIGHT_MUTABLE_PROSE_CEILING = 2096;
 
 const DEFAULT_CC_LIGHT_ASSET_PATHS = [
     resolve(import.meta.dir, "../../../crates/mc-module/assets/guidance_light_primary.txt"),

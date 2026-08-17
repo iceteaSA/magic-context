@@ -343,7 +343,7 @@ Example: ctx_note(action="write", content="Re-run the perf benchmark once the bo
 }
 ```
 
-### ctx_memory — description ~234 tokens, params ~201 tokens (total ~435)
+### ctx_memory — description ~278 tokens, params ~291 tokens (total ~569)
 
 **Description:**
 
@@ -353,7 +353,7 @@ Durable project knowledge shared across every session on this project.
 Your active memories are already visible in <project-memory> (each with its id), and every future session starts with them — write one when you learn something future sessions must know: a project rule, an architectural fact, a hard-won constraint, a config value, or a naming convention. Keep each memory one standalone fact, phrased to make sense without this session's context.
 
 Actions:
-- write: save a new memory (content + category).
+- write: save a new memory (content + category). Optional scope: "project" (default) for this project's store, or "global" for cross-project facts (infrastructure, tooling, environment) stored only in the external long-term memory backend.
 - update: rewrite one memory whose fact changed (ids: [one], content).
 - archive: retire wrong or obsolete memories (ids: [one or more], optional reason).
 - merge: collapse duplicates into one memory (ids: [two or more], content).
@@ -375,7 +375,8 @@ Example: ctx_memory(action="write", category="CONSTRAINTS", content="Pi stores s
       "update",
       "merge",
       "get",
-      "list"
+      "list",
+      "verify"
     ]
   },
   "content": {
@@ -407,30 +408,40 @@ Example: ctx_memory(action="write", category="CONSTRAINTS", content="Pi stores s
   "reason": {
     "description": "Why the memory is being archived (optional, recommended)",
     "type": "string"
+  },
+  "scope": {
+    "description": "Write only. \"project\" (default): this project's memory store. \"global\": a cross-project fact (infrastructure, tooling, environment) stored ONLY in the external long-term memory backend — use when the fact is true regardless of which project you are in. Requires an external backend; recallable from the next session onward.",
+    "type": "string",
+    "enum": [
+      "project",
+      "global"
+    ]
   }
 }
 ```
 
-### ctx_search — description ~309 tokens, params ~184 tokens (total ~493)
+### ctx_search — description ~371 tokens, params ~200 tokens (total ~571)
 
 **Description:**
 
 ```
 Your long-term recall for this project — search everything that ever happened here, not just what's currently visible.
 
-Reach for it when something feels familiar but isn't in view: "did we solve this before?", "what did we decide about X?", "when did this break?", "where does Y live?". Results only contain things you CANNOT currently see — memories already shown in <project-memory> and the live conversation tail are filtered out. A query that is just one or more memory ids (e.g. `#7234` or `12, 34`) bypasses text search and resolves those ids directly.
+Reach for it when something feels familiar but isn't in view: "did we solve this before?", "what did we decide about X?", "when did this break?", "where does Y live?". Results only contain things you CANNOT currently see — memories already shown in <project-memory>, the live conversation tail, and external knowledge already injected via <external-memory> are all filtered out. A query that is just one or more memory ids (e.g. `#7234` or `12, 34`) bypasses text search and resolves those ids directly.
 
 Sources (omit for a broad search across all):
 - memory: curated cross-session project knowledge — rules, constraints, conventions.
 - message: the raw conversation behind your compacted history. Hits include message ordinals — expand the surrounding exchange with ctx_expand(start=N-10, end=N+5).
 - git_commit: this repository's commit history.
 - note: parked decisions, follow-ups, and dismissed notes with their recorded text.
+- external: long-term knowledge from past sessions across projects (requires memory.external.recall.search=true; explicit ctx_search calls only).
 
 Picking sources:
 - "when did this change / was this working before" → ["git_commit", "message"]
 - "did we discuss this earlier" → ["message"]
 - "did we decide something about this / leave a follow-up" → ["note"]
 - "what's our convention / rule for X" → ["memory"]
+- "is there anything relevant from prior sessions / other projects" → ["external"]
 ```
 
 **Parameters (JSON Schema per parameter, as serialized to the provider):**
@@ -446,7 +457,7 @@ Picking sources:
     "type": "number"
   },
   "sources": {
-    "description": "Optional. Restrict to specific sources. Examples: [\"primer\"] for standing project explanations, [\"git_commit\"] for \"when did we change X\", [\"memory\"] for naming conventions, [\"message\"] for \"did we discuss this earlier\", [\"note\"] for parked decisions or follow-ups, [\"git_commit\",\"message\"] for regression hunts. Omit for a broad search across all enabled sources; pass [] to search no sources.",
+    "description": "Optional. Restrict to specific sources. Examples: [\"primer\"] for standing project explanations, [\"git_commit\"] for \"when did we change X\", [\"memory\"] for naming conventions, [\"message\"] for \"did we discuss this earlier\", [\"note\"] for parked decisions or follow-ups, [\"git_commit\",\"message\"] for regression hunts, [\"external\"] for long-term knowledge from past sessions. Omit for a broad search across all enabled sources; pass [] to search no sources.",
     "type": "array",
     "items": {
       "type": "string",
@@ -455,7 +466,8 @@ Picking sources:
         "message",
         "git_commit",
         "primer",
-        "note"
+        "note",
+        "external"
       ]
     }
   }

@@ -521,6 +521,7 @@ export function createMagicContextHook(deps: MagicContextDeps) {
         historianTimeoutMs: deps.config.historian_timeout_ms ?? DEFAULT_HISTORIAN_TIMEOUT_MS,
         memoryEnabled: deps.config.memory?.enabled ?? true,
         autoPromote: deps.config.memory?.auto_promote ?? true,
+        embeddingEnabled: deps.config.embedding?.provider !== "off",
         fallbackModels: historianFallbackModels,
         language: deps.config.language,
         fallbackModelId: (() => {
@@ -1092,6 +1093,7 @@ export function createMagicContextHook(deps: MagicContextDeps) {
                   autoPromote: deps.config.memory.auto_promote ?? true,
               }
             : undefined,
+        embeddingEnabled: deps.config.embedding?.provider !== "off",
         ensureProjectRegistered: ensureProjectRegisteredFromOpenCodeDirectory,
         getHistorianChunkTokens,
         historyBudgetPercentage: deps.config.history_budget_percentage,

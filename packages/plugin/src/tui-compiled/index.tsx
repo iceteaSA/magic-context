@@ -915,6 +915,89 @@ const StatusDialog = props => {
             })();
           })();
         })(), null);
+        _$insert(_el$63, (() => {
+          var _c$16 = _$memo(() => !!s().externalMemory);
+          return () => _c$16() && (() => {
+            const em = s().externalMemory;
+            return (() => {
+              var _el$80 = _$createElement("box"),
+                _el$81 = _$createElement("box"),
+                _el$82 = _$createElement("text"),
+                _el$83 = _$createElement("b");
+              _$insertNode(_el$80, _el$81);
+              _$setProp(_el$80, "flexDirection", "column");
+              _$insertNode(_el$81, _el$82);
+              _$setProp(_el$81, "marginTop", 1);
+              _$insertNode(_el$82, _el$83);
+              _$insertNode(_el$83, _$createTextNode(`External Memory`));
+              _$insert(_el$80, _$createComponent(R, {
+                get t() {
+                  return t();
+                },
+                l: "Provider",
+                get v() {
+                  return em.provider;
+                }
+              }), null);
+              _$insert(_el$80, (() => {
+                var _c$17 = _$memo(() => !!em.endpoint);
+                return () => _c$17() && _$createComponent(R, {
+                  get t() {
+                    return t();
+                  },
+                  l: "Endpoint",
+                  get v() {
+                    return em.endpoint;
+                  },
+                  get fg() {
+                    return t().textMuted;
+                  }
+                });
+              })(), null);
+              _$insert(_el$80, _$createComponent(R, {
+                get t() {
+                  return t();
+                },
+                l: "Circuit",
+                get v() {
+                  return em.circuitState ?? "n/a";
+                },
+                get fg() {
+                  return _$memo(() => !!(em.circuitState && em.circuitState !== "closed"))() ? t().warning : t().textMuted;
+                }
+              }), null);
+              _$insert(_el$80, _$createComponent(R, {
+                get t() {
+                  return t();
+                },
+                l: "Session recall",
+                get v() {
+                  return em.recallState ?? "not started";
+                },
+                get fg() {
+                  return _$memo(() => em.recallState === "failed")() ? t().warning : _$memo(() => em.recallState === "done")() ? t().accent : t().textMuted;
+                }
+              }), null);
+              _$insert(_el$80, (() => {
+                var _c$18 = _$memo(() => em.failedRetainCount != null);
+                return () => _c$18() && _$createComponent(R, {
+                  get t() {
+                    return t();
+                  },
+                  l: "Failed retains",
+                  get v() {
+                    return String(em.failedRetainCount);
+                  },
+                  get fg() {
+                    return _$memo(() => em.failedRetainCount > 0)() ? t().warning : t().textMuted;
+                  }
+                });
+              })(), null);
+              _$effect(_$p => _$setProp(_el$82, "fg", t().text, _$p));
+              return _el$80;
+            })();
+          })();
+        })(), null);
         _$effect(_p$ => {
           var _v$17 = t().text,
             _v$18 = t().text,
@@ -934,16 +1017,16 @@ const StatusDialog = props => {
     _$insert(_el$4, (() => {
       var _c$7 = _$memo(() => !!s().lastTransformError);
       return () => _c$7() && (() => {
-        var _el$80 = _$createElement("box"),
-          _el$81 = _$createElement("text"),
-          _el$82 = _$createTextNode(`⚠ `);
-        _$insertNode(_el$80, _el$81);
-        _$setProp(_el$80, "marginTop", 1);
-        _$setProp(_el$80, "width", "100%");
-        _$insertNode(_el$81, _el$82);
-        _$insert(_el$81, () => s().lastTransformError, null);
-        _$effect(_$p => _$setProp(_el$81, "fg", t().error, _$p));
-        return _el$80;
+        var _el$85 = _$createElement("box"),
+          _el$86 = _$createElement("text"),
+          _el$87 = _$createTextNode(`⚠ `);
+        _$insertNode(_el$85, _el$86);
+        _$setProp(_el$85, "marginTop", 1);
+        _$setProp(_el$85, "width", "100%");
+        _$insertNode(_el$86, _el$87);
+        _$insert(_el$86, () => s().lastTransformError, null);
+        _$effect(_$p => _$setProp(_el$86, "fg", t().error, _$p));
+        return _el$85;
       })();
     })(), _el$18);
     _$insertNode(_el$18, _el$19);
@@ -1168,31 +1251,31 @@ const EmbedDialog = props => {
   const t = () => theme();
   const lines = () => props.detail.statusText.split("\n");
   return (() => {
-    var _el$83 = _$createElement("box"),
-      _el$84 = _$createElement("box"),
-      _el$85 = _$createElement("text"),
-      _el$86 = _$createElement("b");
-    _$insertNode(_el$83, _el$84);
-    _$setProp(_el$83, "flexDirection", "column");
-    _$setProp(_el$83, "width", "100%");
-    _$setProp(_el$83, "paddingLeft", 2);
-    _$setProp(_el$83, "paddingRight", 2);
-    _$setProp(_el$83, "paddingTop", 1);
-    _$setProp(_el$83, "paddingBottom", 1);
-    _$insertNode(_el$84, _el$85);
-    _$setProp(_el$84, "justifyContent", "center");
-    _$setProp(_el$84, "width", "100%");
-    _$setProp(_el$84, "marginBottom", 1);
-    _$insertNode(_el$85, _el$86);
-    _$insertNode(_el$86, _$createTextNode(`Embedding`));
-    _$insert(_el$83, () => lines().map(line => (() => {
-      var _el$88 = _$createElement("text");
-      _$insert(_el$88, line);
-      _$effect(_$p => _$setProp(_el$88, "fg", t().text, _$p));
-      return _el$88;
+    var _el$88 = _$createElement("box"),
+      _el$89 = _$createElement("box"),
+      _el$90 = _$createElement("text"),
+      _el$91 = _$createElement("b");
+    _$insertNode(_el$88, _el$89);
+    _$setProp(_el$88, "flexDirection", "column");
+    _$setProp(_el$88, "width", "100%");
+    _$setProp(_el$88, "paddingLeft", 2);
+    _$setProp(_el$88, "paddingRight", 2);
+    _$setProp(_el$88, "paddingTop", 1);
+    _$setProp(_el$88, "paddingBottom", 1);
+    _$insertNode(_el$89, _el$90);
+    _$setProp(_el$89, "justifyContent", "center");
+    _$setProp(_el$89, "width", "100%");
+    _$setProp(_el$89, "marginBottom", 1);
+    _$insertNode(_el$90, _el$91);
+    _$insertNode(_el$91, _$createTextNode(`Embedding`));
+    _$insert(_el$88, () => lines().map(line => (() => {
+      var _el$93 = _$createElement("text");
+      _$insert(_el$93, line);
+      _$effect(_$p => _$setProp(_el$93, "fg", t().text, _$p));
+      return _el$93;
     })()), null);
-    _$effect(_$p => _$setProp(_el$85, "fg", t().accent, _$p));
-    return _el$83;
+    _$effect(_$p => _$setProp(_el$90, "fg", t().accent, _$p));
+    return _el$88;
   })();
 };
 async function showEmbedDialog(api, targetSessionId = getSessionId(api)) {
@@ -1258,11 +1341,11 @@ function renderTuiProbeCustomArm(api, result) {
     api.ui.dialog.replace(() => {
       try {
         return (() => {
-          var _el$89 = _$createElement("box"),
-            _el$90 = _$createElement("text");
-          _$insertNode(_el$89, _el$90);
-          _$insertNode(_el$90, _$createTextNode(`probe`));
-          return _el$89;
+          var _el$94 = _$createElement("box"),
+            _el$95 = _$createElement("text");
+          _$insertNode(_el$94, _el$95);
+          _$insertNode(_el$95, _$createTextNode(`probe`));
+          return _el$94;
         })();
       } catch (error) {
         result.customThrew = probeErrorMessage(error);
@@ -1335,11 +1418,11 @@ function reportTuiProbe(api, result) {
   if (result.customThrew === null) {
     try {
       api.ui.dialog.replace(() => (() => {
-        var _el$92 = _$createElement("box"),
-          _el$93 = _$createElement("text");
-        _$insertNode(_el$92, _el$93);
-        _$insert(_el$93, summary);
-        return _el$92;
+        var _el$97 = _$createElement("box"),
+          _el$98 = _$createElement("text");
+        _$insertNode(_el$97, _el$98);
+        _$insert(_el$98, summary);
+        return _el$97;
       })());
       return;
     } catch (error) {

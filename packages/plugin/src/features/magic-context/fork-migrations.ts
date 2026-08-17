@@ -28,7 +28,7 @@
  * one lane, not a registry):
  *
  *   10000-10099  skill-memory   (P1 10000, P2 10001, P3a 10002)
- *   10100-10199  external memory (allocated on the external-memory branch)
+ *   10100-10199  external memory (10100)
  */
 
 import { log } from "../../shared/logger";
@@ -40,6 +40,7 @@ import {
     type Migration,
     MigrationLockBusyError,
 } from "./migrations";
+import { ensureColumn } from "./storage-schema-helpers";
 
 function columnExists(db: Database, table: string, column: string): boolean {
     const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: string }>;
@@ -224,6 +225,40 @@ export const FORK_MIGRATIONS: Migration[] = [
                     `UPDATE skill_memory SET origin_project = project_identity, project_identity = '*' WHERE tier='global' AND project_identity != '*'`,
                 ).run();
             })();
+        },
+    },
+    {
+        // External memory v2: session recall snapshot + m[0] recall marker.
+        //
+        // Renumbered nine times chasing the upstream lane
+        // (v31→33→37→38→39→42→50→73→75): every release that claimed the next
+        // version forced a move, and twice the resulting collision made the
+        // runner skip a real migration body, needing live-DB surgery to repair.
+        // The downstream lane ends that class of failure — a fork row sits above
+        // the upstream watermark, so no upstream version can collide with it.
+        //
+        // The body is ensureColumn-idempotent, so a dev DB that already ran this
+        // under any earlier number re-applies harmlessly.
+        version: 10_100,
+        description: "External memory v2: session recall snapshot + m[0] recall marker",
+        up: (db: Database) => {
+            // session_meta existence guard — see v30's comment (partial test fixtures).
+            const hasSessionMeta = db
+                .prepare(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='session_meta' LIMIT 1",
+                )
+                .get();
+            if (!hasSessionMeta) return;
+            // Per-session external recall snapshot (post-dedup, post-trim) — the
+            // frozen content every render replays for byte stability.
+            ensureColumn(db, "session_meta", "external_recall_json", "TEXT");
+            ensureColumn(db, "session_meta", "external_recall_state", "TEXT");
+            ensureColumn(db, "session_meta", "external_recall_at", "INTEGER");
+            // m[0] marker: hash of the external content baked into the cached m[0]
+            // ('' = none). NOT a mustMaterialize trigger — drives only the m[1]
+            // <external-memory> delta comparison. No cache-clear needed: the
+            // cachedRowMatchesState comparison normalizes NULL and '' to equal.
+            ensureColumn(db, "session_meta", "cached_m0_external_recall_hash", "TEXT");
         },
     },
 ];

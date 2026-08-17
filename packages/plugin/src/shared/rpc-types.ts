@@ -220,6 +220,22 @@ export interface StatusDetail extends SidebarSnapshot {
         plugin_supported_version: number;
     };
     /**
+     * External memory backend status snapshot. Null when the provider is off
+     * (or never initialized). `recallState` mirrors the session's
+     * `external_recall_state` so the status dialog can show "pending" /
+     * "done" / "failed" alongside the backend health. `failedRetainCount`
+     * comes from the operations endpoint (type=retain&status=failed) and is
+     * null when the backend is offline, the endpoint is missing, or the
+     * response is malformed. Populated by the async `buildStatusDetail`.
+     */
+    externalMemory?: {
+        provider: string;
+        endpoint?: string;
+        circuitState?: string;
+        recallState?: string | null;
+        failedRetainCount?: number | null;
+    } | null;
+    /**
      * Per-skill cross-session recall store (skill_memory table) stats scoped
      * to the session's project identity. Null when no project identity is
      * available (status dialog will hide the section).

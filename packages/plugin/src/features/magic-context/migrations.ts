@@ -21,6 +21,9 @@ export const FORK_MIGRATION_VERSION_FLOOR = 10_000;
  * 3. The migration runs in a transaction — if it throws, it rolls back
  */
 
+// Exported for the downstream-lane runner in fork-migrations.ts. Fork migrations
+// live in their own array so upstream's MIGRATIONS literal (and the tests and
+// fence constant derived from it) stay byte-identical to upstream.
 export interface Migration {
     version: number;
     description: string;
@@ -36,6 +39,8 @@ export class MigrationLockBusyError extends Error {
     }
 }
 
+// Exported for the downstream-lane runner in fork-migrations.ts, which needs the
+// same lock-error classification to raise MigrationLockBusyError consistently.
 export function isSqliteLockError(error: unknown): boolean {
     if (!error || typeof error !== "object") return false;
     const candidate = error as { code?: unknown; message?: unknown };

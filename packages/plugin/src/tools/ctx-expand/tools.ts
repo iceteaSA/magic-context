@@ -1,5 +1,6 @@
 import { type ToolDefinition, tool } from "@opencode-ai/plugin";
 import { getLastCompartmentEndMessage } from "../../features/magic-context/compartment-storage";
+import { resolveRootSessionId } from "../../features/magic-context/session-parent-registry";
 import type { ContextDatabase } from "../../features/magic-context/storage";
 import { readSessionChunk } from "../../hooks/magic-context/read-session-chunk";
 import { unwrapImitatedReducedArgs } from "../unwrap-imitated-reduced-args";
@@ -57,7 +58,11 @@ function createCtxExpandTool(deps: CtxExpandToolDeps): ToolDefinition {
                 verbose: "boolean",
                 message: "number",
             });
-            const sessionId = toolContext.sessionID;
+            // Resolve child sessions (sidekick, task subagents) to the ROOT
+            // conversation — ctx_search hands out ordinals from the root
+            // session's message index, so expanding them against the child's
+            // empty session would always miss. Mirrors ctx_search.
+            const sessionId = resolveRootSessionId(toolContext.sessionID);
 
             // By-ordinal mode: full recovery of a single message from stored history.
             if (typeof args.message === "number" && args.message >= 1) {

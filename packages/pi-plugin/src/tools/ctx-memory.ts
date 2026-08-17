@@ -32,9 +32,12 @@
  * versa).
  */
 
+import { basename } from "node:path";
+
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import {
 	archiveMemory,
+	getExternalMemoryStatus,
 	getMemoriesByIds,
 	getMemoriesByProject,
 	getMemoryByHash,
@@ -45,10 +48,14 @@ import {
 	type Memory,
 	type MemoryCategory,
 	mergeMemoryStats,
+	removeFromExternalBackend,
 	saveEmbedding,
 	supersededMemory,
+	teeToExternalBackend,
 	updateMemoryContent,
 	updateMemorySeenCount,
+	updateMemoryVerification,
+	upsertToExternalBackend,
 	V2_MEMORY_CATEGORIES,
 } from "@magic-context/core/features/magic-context/memory";
 import {
@@ -56,6 +63,7 @@ import {
 	getProjectEmbeddingSnapshot,
 } from "@magic-context/core/features/magic-context/memory/embedding";
 import { invalidateMemory } from "@magic-context/core/features/magic-context/memory/embedding-cache";
+import type { ExternalMemoryRemoveItem } from "@magic-context/core/features/magic-context/memory/external-memory-provider";
 import { computeNormalizedHash } from "@magic-context/core/features/magic-context/memory/normalize-hash";
 import {
 	normalizeStoredProjectPath,
@@ -91,6 +99,8 @@ const DEFAULT_LIST_LIMIT = 10;
 // no other way to look it up. Memory verification (file mapping) and
 // classification are no longer tool actions — the verify and classify dreamer
 // tasks apply them host-side from a manifest.
+// `verify` (dreamer-only) asserts repo-grounded truth + refreshes external
+// long-term recency — mirrors OpenCode's CTX_MEMORY_DREAMER_ACTIONS.
 const ALL_ACTIONS = [
 	"write",
 	"archive",
@@ -98,10 +108,14 @@ const ALL_ACTIONS = [
 	"merge",
 	"get",
 	"list",
+	"verify",
 ] as const;
 type CtxMemoryAction = (typeof ALL_ACTIONS)[number];
 
-const DREAMER_ONLY_ACTIONS: ReadonlySet<CtxMemoryAction> = new Set(["list"]);
+const DREAMER_ONLY_ACTIONS: ReadonlySet<CtxMemoryAction> = new Set([
+	"list",
+	"verify",
+]);
 
 const GET_MAX_IDS = 20;
 
@@ -145,6 +159,12 @@ const ParamsSchema = Type.Object(
 		reason: Type.Optional(
 			Type.String({
 				description: "Why the memory is being archived (optional, recommended)",
+			}),
+		),
+		scope: Type.Optional(
+			Type.Union([Type.Literal("project"), Type.Literal("global")], {
+				description:
+					'Write only. "project" (default): this project\'s memory store. "global": a cross-project fact stored ONLY in the external long-term memory backend — use when the fact is true regardless of which project you are in. Requires an external backend; recallable from the next session onward.',
 			}),
 		),
 	},
@@ -461,6 +481,20 @@ export function createCtxMemoryTool(
 			}
 			const sessionId = ctx.sessionManager.getSessionId();
 
+			// Helper to build an ExternalMemoryRemoveItem from a memory row.
+			// Identity derives from the original content hash + project identity,
+			// so a corrective remove needs the row AS IT STOOD before mutation.
+			const buildRemoveItem = (
+				memory: { content: string; category: Memory["category"] },
+				memProjectIdentity: string,
+			): ExternalMemoryRemoveItem => ({
+				content: memory.content,
+				category: memory.category as MemoryCategory,
+				scope: "project",
+				projectIdentity: memProjectIdentity,
+				...(ctx.cwd ? { projectName: basename(ctx.cwd) } : {}),
+			});
+
 			if (params.action === "write") {
 				const content = params.content?.trim();
 				if (!content)
@@ -469,6 +503,31 @@ export function createCtxMemoryTool(
 				const rawCategory = params.category;
 				if (!rawCategory) {
 					return err("Error: 'category' is required when action is 'write'.");
+				}
+
+				// Global scope: cross-project knowledge goes to the external
+				// long-term store's main bank ONLY — no local row. Mirrors
+				// OpenCode's ctx-memory/tools.ts global scope branch.
+				if (params.scope === "global") {
+					if (!getExternalMemoryStatus()) {
+						return err(
+							"Error: scope 'global' requires an external memory backend (memory.external) — none is configured. Use the default project scope instead.",
+						);
+					}
+					void teeToExternalBackend("agent", [
+						{
+							content,
+							category: rawCategory,
+							scope: "global",
+							projectIdentity,
+							...(ctx.cwd ? { projectName: basename(ctx.cwd) } : {}),
+							sourceType: dreamerAllowed ? "dreamer" : "agent",
+							sessionId,
+						},
+					]);
+					return ok(
+						`Queued global memory in ${rawCategory} for the long-term store (origin: this project). It has no local ID; it surfaces via the session-start global recall slice and ctx_search source "external" from the next session onward.`,
+					);
 				}
 
 				const existing = getMemoryByHash(
@@ -501,6 +560,21 @@ export function createCtxMemoryTool(
 				// session_meta), defeating the whole additive/non-additive split and
 				// busting unrelated projects. Matches OpenCode's write path, which
 				// likewise does no cache invalidation.
+
+				// Tee to external backend (project scope). Fire-and-forget; never
+				// blocks the local write. Mirrors OpenCode's write tee.
+				void teeToExternalBackend("agent", [
+					{
+						content,
+						category: rawCategory,
+						scope: "project",
+						projectIdentity,
+						...(ctx.cwd ? { projectName: basename(ctx.cwd) } : {}),
+						sourceType: dreamerAllowed ? "dreamer" : "agent",
+						sessionId,
+					},
+				]);
+
 				return ok(`Saved memory [ID: ${memory.id}] in ${rawCategory}.`);
 			}
 
@@ -604,6 +678,26 @@ export function createCtxMemoryTool(
 					memoryId: memory.id,
 					content,
 				});
+				// W2 corrective propagation: drop the STALE external document (old
+				// content hash) and tee the corrected fact as a new document. The
+				// local row's content rewrite already happened in the transaction
+				// above, so `memory.content` is still the OLD content and `content`
+				// is the NEW content — both needed for the remove-then-tee cascade.
+				// Mirrors OpenCode's update W2 path.
+				void removeFromExternalBackend([
+					buildRemoveItem(memory, targetIdentity),
+				]);
+				void teeToExternalBackend("agent", [
+					{
+						content,
+						category: memory.category as MemoryCategory,
+						scope: "project",
+						projectIdentity: targetIdentity,
+						...(ctx.cwd ? { projectName: basename(ctx.cwd) } : {}),
+						sourceType: dreamerAllowed ? "dreamer" : "agent",
+						sessionId,
+					},
+				]);
 				return ok(`Updated memory [ID: ${memory.id}] in ${memory.category}.`);
 			}
 
@@ -863,12 +957,15 @@ export function createCtxMemoryTool(
 						return err(inactiveMemoryError(memoryId, "archiving"));
 					}
 				}
+				// Capture memory rows BEFORE archiving so the external corrective
+				// remove can derive the document_id from the content AS IT STOOD.
 				const targets = archiveIds.map((memoryId) => {
 					const memory = getMemoryById(deps.db, memoryId);
 					if (!memory)
 						throw new Error(`validated memory ${memoryId} disappeared`);
 					return {
 						memoryId,
+						memory,
 						projectIdentity: targetIdentityForStoredPath(memory.projectPath),
 					};
 				});
@@ -882,10 +979,53 @@ export function createCtxMemoryTool(
 						});
 					}
 				});
+				// Corrective propagation: the facts are gone locally (archived) →
+				// drop the external documents. Mirrors OpenCode's archive path.
+				void removeFromExternalBackend(
+					targets.map((target) =>
+						buildRemoveItem(target.memory, target.projectIdentity),
+					),
+				);
 				const reasonSuffix = params.reason ? ` (${params.reason})` : "";
 				const idList = archiveIds.join(", ");
 				const plural = archiveIds.length > 1 ? "memories" : "memory";
 				return ok(`Archived ${plural} [ID: ${idList}]${reasonSuffix}.`);
+			}
+
+			if (params.action === "verify") {
+				// Dreamer-only: mark a memory as verified and upsert to external
+				// backend (refreshes Hindsight's recency with zero duplicate risk).
+				// Mirrors OpenCode's verify action.
+				const verifyIds = params.ids;
+				if (verifyIds?.length !== 1 || !verifyIds.every(Number.isInteger)) {
+					return err(
+						"Error: 'ids' must contain exactly one integer memory ID when action is 'verify'.",
+					);
+				}
+				const verifyId = verifyIds[0];
+				const memory = getMemoryById(deps.db, verifyId);
+				if (!memory || !memoryVisibleToTool(memory)) {
+					return err(`Error: Memory with ID ${verifyId} was not found.`);
+				}
+				const verifyProjectIdentity = targetIdentityForStoredPath(
+					memory.projectPath,
+				);
+				updateMemoryVerification(deps.db, memory.id, "verified");
+				// Verbatim re-retain = same document_id = server-side upsert →
+				// refreshes Hindsight's mentioned_at recency with ZERO duplicate risk.
+				void upsertToExternalBackend([
+					{
+						content: memory.content,
+						category: memory.category as MemoryCategory,
+						scope: "project",
+						projectIdentity: verifyProjectIdentity,
+						...(ctx.cwd ? { projectName: basename(ctx.cwd) } : {}),
+						sourceType: "dreamer",
+						sessionId,
+						verifiedAt: Date.now(),
+					},
+				]);
+				return ok(`Verified memory [ID: ${memory.id}].`);
 			}
 
 			return err("Error: Unknown action.");

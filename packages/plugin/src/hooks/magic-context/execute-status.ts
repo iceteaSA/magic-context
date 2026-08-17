@@ -5,6 +5,11 @@ import type {
     DreamTaskProgress,
 } from "../../features/magic-context/dreamer/task-registry";
 import { formatDreamTaskBacklogs } from "../../features/magic-context/dreamer/task-registry";
+import {
+    fetchExternalFailedRetains,
+    getExternalMemoryStatus,
+} from "../../features/magic-context/memory/external-memory";
+import { readExternalRecallSnapshot } from "../../features/magic-context/memory/external-recall-read";
 import { resolveProjectIdentity } from "../../features/magic-context/memory/project-identity";
 import { parseCacheTtl } from "../../features/magic-context/scheduler";
 import { getSkillMemoryStats } from "../../features/magic-context/skill-memory/storage";
@@ -273,6 +278,25 @@ export async function executeStatus(
             } catch {
                 // skill_memory may not exist (pre-v75 schema) — skip silently
             }
+        }
+
+        const externalStatus = getExternalMemoryStatus();
+        if (externalStatus) {
+            const { state: recallState } = readExternalRecallSnapshot(db, sessionId);
+            // fetchExternalFailedRetains inherits the 10s fetch timeout and
+            // circuit breaker from HindsightMemoryBackend.request(); null on
+            // every failure path so the field is always safe to surface.
+            const failedRetainCount = await fetchExternalFailedRetains();
+            lines.push(
+                "",
+                "### External memory",
+                `- provider: ${externalStatus.provider} (${externalStatus.endpoint ?? "?"})`,
+                `- circuit: ${externalStatus.circuitState ?? "n/a"}`,
+                `- session recall: ${recallState ?? "not started"}`,
+                ...(failedRetainCount !== null
+                    ? [`- failed retains (server): ${failedRetainCount}`]
+                    : []),
+            );
         }
 
         return lines.join("\n");

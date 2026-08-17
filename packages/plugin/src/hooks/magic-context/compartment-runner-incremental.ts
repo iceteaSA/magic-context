@@ -1,3 +1,5 @@
+import { basename } from "node:path";
+
 import { embedAndStoreCompartmentChunks } from "../../features/magic-context/compartment-embedding";
 import { insertCompartmentEvents } from "../../features/magic-context/compartment-events";
 import {
@@ -19,6 +21,7 @@ export {
 import { isCompartmentLeaseHeld } from "../../features/magic-context/compartment-lease";
 import {
     embedPromotedFacts,
+    type PromotedMemoryRef,
     promoteSessionFactsDurable,
 } from "../../features/magic-context/memory";
 import { resolveProjectIdentity } from "../../features/magic-context/memory/project-identity";
@@ -593,13 +596,16 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
         // explicitly disabled the memory feature in config.
         // Two distinct gates:
         //  - embeddingActive: embeddings + project registration fire whenever the
-        //    memory FEATURE is enabled. They are the substrate for ctx_search +
-        //    future dreamer cross-linking and must NOT depend on auto_promote.
-        //  - promotionActive: writing facts as project memories additionally
-        //    requires auto_promote (a user who disabled auto-promotion still wants
-        //    search/embedding, just not auto-written memories).
-        const embeddingActive = !!promotionDirectory && deps.memoryEnabled !== false;
-        const promotionActive = embeddingActive && deps.autoPromote !== false;
+        //    embedding PROVIDER is enabled (config `embedding.provider !== "off"`).
+        //    Embeddings are the substrate for ctx_search + future dreamer cross-
+        //    linking and are independent of the memory store flags.
+        //  - promotionActive: writing facts as project memories requires
+        //    memory.enabled + auto_promote (issue #44). A user with memory off
+        //    gets no memory writes at all; a user with memory on but auto-promote
+        //    off still gets search/embedding, just not auto-written memories.
+        const embeddingActive = !!promotionDirectory && deps.embeddingEnabled !== false;
+        const promotionActive =
+            !!promotionDirectory && deps.memoryEnabled !== false && deps.autoPromote !== false;
         const promotionProjectIdentity = promotionDirectory
             ? resolveProjectIdentity(promotionDirectory)
             : "";
@@ -616,7 +622,7 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
             }
             return true;
         });
-        let promotedFactRefs: Array<{ memoryId: number; content: string }> = [];
+        let promotedFactRefs: PromotedMemoryRef[] = [];
         let persistedIds: number[] = [];
 
         // Append new compartments (existing stay untouched in DB) and publish all
@@ -811,6 +817,7 @@ export async function runCompartmentAgent(deps: CompartmentRunnerDeps): Promise<
                         sessionId,
                         promotionProjectIdentity,
                         promotedFactRefs,
+                        { projectName: basename(promotionDirectory) },
                     );
                 } catch (error) {
                     sessionLog(sessionId, "promoted fact embedding dispatch failed:", error);

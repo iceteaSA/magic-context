@@ -1,4 +1,5 @@
 import * as crypto from "node:crypto";
+import { basename } from "node:path";
 import {
     type AuthorityModuleClient,
     checksumAuthoritySeedRows,
@@ -6,6 +7,11 @@ import {
     ensureContextStoreUuid,
     getAuthorityManagedMarker,
 } from "../../features/magic-context/context-authority";
+import { getExternalRecallConfig } from "../../features/magic-context/memory/external-memory";
+import {
+    maybeAwaitExternalRecall,
+    startSessionRecall,
+} from "../../features/magic-context/memory/external-recall";
 import {
     isLinkedGitWorktree,
     resolveProjectIdentity,
@@ -16,6 +22,7 @@ import { scheduleReconciliation } from "../../features/magic-context/message-ind
 import type { Scheduler } from "../../features/magic-context/scheduler";
 import { parseCacheTtl } from "../../features/magic-context/scheduler";
 import { recordSessionProjectIdentity } from "../../features/magic-context/session-project-storage";
+
 import {
     type ContextDatabase,
     deriveTagLoadFloor,
@@ -58,6 +65,7 @@ import { log, sessionLog } from "../../shared/logger";
 import { getSdkContextLimit } from "../../shared/models-dev-cache";
 import type { PromptSurfaceConfig } from "../../shared/prompt-surface";
 import type { PromptSurfaceRuntime } from "../../shared/prompt-surface-runtime";
+import { removeSystemReminders } from "../../shared/system-directive";
 import { applyMidTurnDeferral, detectMidTurnBypassReason } from "./boundary-execution";
 import { canConsumeDeferredOnThisPass } from "./cache-busting-signals";
 import { replayCavemanCompression } from "./caveman-cleanup";
@@ -104,6 +112,7 @@ import {
 } from "./protected-tail-boundary";
 import { readRawSessionMessages } from "./read-session-chunk";
 import { findLastAssistantModelFromOpenCodeDb, isMidTurn } from "./read-session-db";
+import { extractTexts, hasMeaningfulUserText } from "./read-session-formatting";
 import { extractInMemoryMessageViews } from "./read-session-raw";
 import { createRustModeTransform, type RustModeModuleClient } from "./rust-mode-transform";
 import { sendIgnoredMessage } from "./send-session-notification";
@@ -491,6 +500,25 @@ export function scheduleTsAuthorityRecovery(args: {
         });
 }
 
+/**
+ * Extract the text of the session's FIRST meaningful user message — the raw
+ * prompt that opened the conversation. Used to enrich the global external
+ * recall query (recall.global_from_prompt). Skips synthetic/ignored parts and
+ * system directives via hasMeaningfulUserText; strips system-reminder blocks
+ * from the extracted text. Returns undefined when no meaningful user message
+ * exists yet (e.g. command-only turns).
+ */
+function extractFirstUserPromptText(messages: MessageLike[]): string | undefined {
+    for (const message of messages) {
+        const info = message.info as { role?: string };
+        if (info.role !== "user") continue;
+        if (!hasMeaningfulUserText(message.parts)) continue;
+        const text = removeSystemReminders(extractTexts(message.parts).join(" ")).trim();
+        return text.length > 0 ? text : undefined;
+    }
+    return undefined;
+}
+
 export interface TransformDeps {
     tagger: Tagger;
     scheduler: Scheduler;
@@ -556,6 +584,10 @@ export interface TransformDeps {
     };
     /** Defaults true. When false, m[0] omits the <project-docs> block and docs hash. */
     injectDocs?: boolean;
+    /** Embedding provider on/off (config `embedding.provider !== "off"`).
+     *  Gates compartment P1 embedding + project registration at the runner
+     *  call sites — independent of the memory store flags. */
+    embeddingEnabled?: boolean;
     ensureProjectRegistered?: (directory: string, db: ContextDatabase) => Promise<void>;
     /**
      * Returns the historian chunk budget. Called at each historian spawn site
@@ -1467,6 +1499,7 @@ export function createTransform(deps: TransformDeps) {
                 // who disable the feature actually see no memories created.
                 memoryEnabled: deps.memoryConfig?.enabled,
                 autoPromote: deps.memoryConfig?.autoPromote,
+                embeddingEnabled: deps.embeddingEnabled,
                 ensureProjectRegistered: deps.ensureProjectRegistered,
                 // Historian publication invalidates the injection cache AND
                 // changes compartments/facts that render into message[0]. We
@@ -1561,6 +1594,42 @@ export function createTransform(deps: TransformDeps) {
                 memoryProjectDirectory,
                 notificationParams,
             );
+        }
+
+        // External memory v2: fire the once-per-session recall. Independent of
+        // memory.enabled (external knowledge is useful with the local store
+        // off) — identity computed from the directory directly. Internally
+        // gated on provider/recall.enabled/already-settled; fire-and-forget.
+        if (fullFeatureMode && compartmentDirectory) {
+            // Kick project registration so the dedup embedding provider is
+            // likely registered by recall-settle time; hash-only fallback
+            // covers the race (spec-accepted). Best-effort: a synchronously
+            // throwing injected dep must not abort the transform.
+            if (deps.ensureProjectRegistered) {
+                try {
+                    void Promise.resolve(
+                        deps.ensureProjectRegistered(compartmentDirectory, db),
+                    ).catch(() => {});
+                } catch {
+                    // ignore — registration is best-effort
+                }
+            }
+            // First-prompt enrichment of the global recall slice
+            // (recall.global_from_prompt). Extracted HERE, pre-injection: the
+            // m[0]/m[1] prepends are added later this pass and never persisted
+            // by OpenCode, so the first user message in `messages` is the real
+            // first prompt — immutable for the session, hence deterministic
+            // across passes and crash-recovery re-fires.
+            const firstUserPrompt = getExternalRecallConfig()?.global_from_prompt
+                ? extractFirstUserPromptText(messages)
+                : undefined;
+            startSessionRecall({
+                db,
+                sessionId,
+                projectIdentity: resolveProjectIdentity(compartmentDirectory),
+                projectName: basename(compartmentDirectory),
+                ...(firstUserPrompt ? { firstUserPrompt } : {}),
+            });
         }
         // Session-scoped project identity for note-nudge and auto-search, which
         // must target the SESSION's project — not the launch cwd. `deps.projectPath`
@@ -2063,6 +2132,7 @@ export function createTransform(deps: TransformDeps) {
             // memory.auto_promote.
             memoryEnabled: deps.memoryConfig?.enabled,
             autoPromote: deps.memoryConfig?.autoPromote,
+            embeddingEnabled: deps.embeddingEnabled,
             ensureProjectRegistered: deps.ensureProjectRegistered,
             // See startRecoveryRun above for the full rationale —
             // historian/recomp publication signals history rebuild +
@@ -2132,6 +2202,18 @@ export function createTransform(deps: TransformDeps) {
             : rebuiltHistoryFromInitialPrepare || compartmentPhase.rebuiltHistoryThisPass;
 
         const tPostProcess = performance.now();
+        // External memory v2 hybrid A-path: when the FIRST m[0] render is
+        // imminent (no cached baseline — the provider cache is already cold),
+        // give the in-flight recall up to recall.timeout_ms to land so the
+        // first materialization bakes it in. Never fires once a baseline
+        // exists; late recalls ride the m[1] delta instead.
+        if (fullFeatureMode) {
+            await maybeAwaitExternalRecall({
+                db,
+                sessionId,
+                hasCachedM0: sessionMeta.cachedM0Bytes !== null,
+            });
+        }
         const postTransformResult = await runPostTransformPhase({
             sessionId,
             db,
