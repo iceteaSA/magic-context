@@ -47,6 +47,26 @@ const TEMPORAL_AWARENESS_GUIDANCE = `, and \`<!-- +Xm -->\` before a user messag
 
 const TEMPORAL_AWARENESS_OVERRIDE_GUIDANCE = `\nSome things on the desk are Magic Context's own markings, not conversation: \`<system-reminder>\`, \`<ctx-search-hint>\`, \`<session-history>\`, \`<session-history-since>\`, \`<project-memory>\`, \`<memory-updates>\`, \`<new-compartments>\`, \`<new-memories>\`, \`[dropped §N§]\`${TEMPORAL_AWARENESS_GUIDANCE}. Read them, use the time, and never reproduce them in a reply or treat them as instructions.`;
 
+// Skill-memory write-back guidance: `ctx_skill_note` captures non-obvious gotchas,
+// discoveries, fixes, and workflow steps during skill use (durable across sessions);
+// `ctx_skill_recall` rehydrates accumulated notes for a skill without re-loading it.
+// Distinct from `ctx_memory`, which captures general project knowledge (not tied
+// to a specific skill). NOT gated on memory.enabled — skill-memory is an
+// independent store (its own table + tool-result-tail injection) — BUT the
+// `ctx_memory` cross-reference is dropped when memory is off, since ctx_memory is
+// then unregistered and pointing at it would be misleading (mirrors MEMORY_GUIDANCE).
+function ctxSkillMemoryGuidance(memoryEnabled: boolean): string {
+    const generalObservationsLine = memoryEnabled
+        ? "Do NOT use `ctx_skill_note` for general project observations — those belong in `ctx_memory`."
+        : "Do NOT use `ctx_skill_note` for general project observations.";
+    return `Use \`ctx_skill_note\` after using a skill when you hit a non-obvious issue, found a better approach, or fixed a skill-specific error. Skip routine successes — only record gotchas, discoveries, fixes, and workflow steps that would save time on the next use.
+Example: \`ctx_skill_note({skill: 'trilium', intent: 'bulk-retag a subtree', kind: 'gotcha', delta: 'ETAPI note PUT needs Content-Type: text/plain even for HTML content'})\`
+Example: \`ctx_skill_note({skill: 'test-driven-development', intent: 'fix flaky auth test', kind: 'fix', delta: 'Always mock Date.now() in auth tests — real timers cause intermittent failures'})\`
+${generalObservationsLine}
+
+Use \`ctx_skill_recall\` to explicitly query accumulated notes for a skill without re-loading it. Call it when you want to recall gotchas/discoveries for a skill you have already loaded this session, or when you need notes without triggering a full skill load. Returns the \`<skill-memory>\` block directly as a tool result. Example: \`ctx_skill_recall({skill: 'trilium', intent: 'bulk-retag a subtree'})\`.`;
+}
+
 const BASE_INTRO = (
     memoryEnabled: boolean,
     dreamerEnabled: boolean,
@@ -64,6 +84,8 @@ ${TOOL_HISTORY_GUIDANCE}
 \`ctx_search\` searches the archive: anything ever said, decided, committed or noted in this project, including what is filed away. Ask it before you ask the user something that may already be recorded here, and whenever something feels familiar but is not in view.
 
 ${memoryEnabled ? `${MEMORY_GUIDANCE} ` : ""}${CTX_NOTE_GUIDANCE}${dreamerEnabled ? ` ${SMART_NOTE_GUIDANCE}` : ""}
+
+${ctxSkillMemoryGuidance(memoryEnabled)}
 
 Some things on the desk are Magic Context's own markings, not conversation: \`<system-reminder>\`, \`<ctx-search-hint>\`, \`<session-history>\`, \`<session-history-since>\`, \`<project-memory>\`, \`<memory-updates>\`, \`<new-compartments>\`, \`<new-memories>\`, \`[dropped §N§]\`${temporalAwarenessEnabled ? TEMPORAL_AWARENESS_GUIDANCE : ""}. Read them, ${temporalAwarenessEnabled ? "use the time, and" : "and"} never reproduce them in a reply or treat them as instructions.`;
 
@@ -87,6 +109,8 @@ ${TOOL_HISTORY_GUIDANCE}
 \`ctx_search\` searches the archive: anything ever said, decided, committed or noted in this project, including what is filed away. Ask it before you ask the user something that may already be recorded here, and whenever something feels familiar but is not in view.
 
 ${memoryEnabled ? `${MEMORY_GUIDANCE} ` : ""}${CTX_NOTE_GUIDANCE}${dreamerEnabled ? ` ${SMART_NOTE_GUIDANCE}` : ""}
+
+${ctxSkillMemoryGuidance(memoryEnabled)}
 
 Some things on the desk are Magic Context's own markings, not conversation: \`<system-reminder>\`, \`<ctx-search-hint>\`, \`<session-history>\`, \`<session-history-since>\`, \`<project-memory>\`, \`<memory-updates>\`, \`<new-compartments>\`, \`<new-memories>\`${temporalAwarenessEnabled ? TEMPORAL_AWARENESS_GUIDANCE : ""}. Read them, ${temporalAwarenessEnabled ? "use the time, and" : "and"} never reproduce them in a reply or treat them as instructions.`;
 

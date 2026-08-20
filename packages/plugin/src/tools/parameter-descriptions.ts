@@ -40,6 +40,21 @@ export const FULL_PARAMETER_DESCRIPTIONS = {
         from: "Earliest date, YYYY-MM-DD (inclusive).",
         to: "Latest date, YYYY-MM-DD (inclusive; default open).",
     },
+    // Fork skill-memory tools: full text matches each tool's own .describe() so
+    // the full preset changes nothing; light is the compressed variant.
+    ctx_skill_note: {
+        skill: "The skill name (e.g. 'test-driven-development')",
+        intent: "The task/intent context when this note was learned",
+        kind: "Note type: 'gotcha' (non-obvious trap), 'discovery' (better approach found), 'fix' (error→solution), 'workflow' (step that must not be skipped). Do NOT use 'general' — general observations belong in ctx_memory.",
+        delta: "The note content — concise, actionable, specific to this skill",
+        tags: "Optional tags for future filtering",
+    },
+    ctx_skill_recall: {
+        skill: "The skill name to recall notes for (e.g. 'test-driven-development')",
+        intent: "Optional: your current task intent — used for intent-scoped recall (P2). Omit for flat recall.",
+        max_tokens:
+            "Optional token budget override. Defaults to the skill's frontmatter max_tokens (or 1500 if absent).",
+    },
 } as const;
 
 export const LIGHT_PARAMETER_DESCRIPTIONS = {
@@ -77,6 +92,18 @@ export const LIGHT_PARAMETER_DESCRIPTIONS = {
         sources: "Restrict to these sources; omit for all.",
         from: "Earliest date, YYYY-MM-DD (inclusive).",
         to: "Latest date, YYYY-MM-DD (inclusive; default open).",
+    },
+    ctx_skill_note: {
+        skill: "Skill name.",
+        intent: "Task context when the lesson was learned.",
+        kind: "gotcha | discovery | fix | workflow (general facts go to ctx_memory).",
+        delta: "The lesson, concise and skill-specific.",
+        tags: "Optional filter tags.",
+    },
+    ctx_skill_recall: {
+        skill: "Skill name.",
+        intent: "Optional current intent for scoped recall.",
+        max_tokens: "Optional token budget (default: frontmatter or 1500).",
     },
 } as const;
 

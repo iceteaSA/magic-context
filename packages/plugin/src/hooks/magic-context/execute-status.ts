@@ -12,8 +12,10 @@ import {
     formatDreamTaskBacklogs,
     formatDreamTaskFailures,
 } from "../../features/magic-context/dreamer/task-registry";
+import { resolveProjectIdentity } from "../../features/magic-context/memory/project-identity";
 import { getProtectionWindowForSession } from "../../features/magic-context/protection-window";
 import { parseCacheTtl } from "../../features/magic-context/scheduler";
+import { getSkillMemoryStats } from "../../features/magic-context/skill-memory/storage";
 import { getPendingOps } from "../../features/magic-context/storage";
 import { getOrCreateSessionMeta } from "../../features/magic-context/storage-meta";
 import { getTagsBySession } from "../../features/magic-context/storage-tags";
@@ -82,7 +84,7 @@ function formatExecuteThreshold(detail: ExecuteThresholdDetail, contextLimit: nu
     return `${percentage}%${clampNote}`;
 }
 
-export function executeStatus(
+export async function executeStatus(
     db: Database,
     sessionId: string,
     executeThresholdPercentageConfig:
@@ -109,7 +111,8 @@ export function executeStatus(
         diagnostics?: boolean;
         compactionEnabled?: boolean;
     },
-): string {
+    directory?: string,
+): Promise<string> {
     // Single source of truth — resolver tells us both the effective percentage AND
     // which config source won (tokens vs percentage). Previously /ctx-status
     // reimplemented the token-match check here and missed progressive base-model
@@ -375,6 +378,32 @@ export function executeStatus(
                 "### Dreamer Progress",
                 `- ${dreamer.progress.task}: ${dreamer.progress.processed}/${dreamer.progress.total} processed this run`,
             );
+        }
+
+        // Skill-memory stats — only when a directory is available to resolve
+        // the project identity (skill_memory is partitioned on
+        // project_identity). Mirrors the external-memory section's pattern:
+        // surface counts only when there is something to show, skip otherwise.
+        // Wrapped in try/catch so a missing skill_memory table (e.g. pre-v75
+        // migration in tests) doesn't fail the whole status output — same
+        // defensive pattern the tags / pending_ops queries use.
+        if (directory) {
+            try {
+                const projectIdentity = resolveProjectIdentity(directory);
+                if (projectIdentity) {
+                    const skillStats = getSkillMemoryStats(db, projectIdentity);
+                    if (skillStats.totalNotes > 0) {
+                        lines.push(
+                            "",
+                            "### Skill memory",
+                            `- notes: ${skillStats.totalNotes} (across ${skillStats.skillsWithNotes} ${skillStats.skillsWithNotes === 1 ? "skill" : "skills"})`,
+                            `- pinned: ${skillStats.pinnedNotes}`,
+                        );
+                    }
+                }
+            } catch {
+                // skill_memory may not exist (pre-v75 schema) — skip silently
+            }
         }
 
         return lines.join("\n");

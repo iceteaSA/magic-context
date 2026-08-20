@@ -4,7 +4,7 @@ import type { HarnessId } from "../../shared/harness";
 import type { ModelInput } from "../../shared/model-resolution";
 import type { PromptArgs } from "../../shared/model-suggestion-retry";
 import type { Database } from "../../shared/sqlite";
-import type { ParsedEvent } from "./compartment-parser";
+import type { ParsedEvent, ParsedSkillObservation } from "./compartment-parser";
 import type {
     BoundarySnapshotValidationResult,
     ProtectedTailBoundarySnapshot,
@@ -278,6 +278,7 @@ export type ValidatedHistorianPassResult =
            *  emitted compartments (same convention as `<events>` at_compartment);
            *  undefined → emission falls back to the chunk span. */
           primerCandidates?: Array<{ question: string; originCompartmentIndex?: number }>;
+          skillObservations?: ParsedSkillObservation[];
           /** v2: historian-extracted events (stored, not rendered). */
           events?: ParsedEvent[];
           /**
