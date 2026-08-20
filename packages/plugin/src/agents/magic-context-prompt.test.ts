@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildMagicContextSection } from "./magic-context-prompt";
+import { buildMagicContextSection, ctxSkillMemoryGuidance } from "./magic-context-prompt";
 
 const CAVEMAN_MARKER = "BEWARE";
 const CAVEMAN_PHRASE_TAIL = "consciously revert to full sentences";
@@ -458,7 +458,20 @@ describe("buildMagicContextSection — Rust guidance asset parity", () => {
                 true,
                 preset,
             );
-            expect(asset).toBe(rendered);
+            // Fork (skill-memory): OpenCode builds its own guidance; the module serves these
+            // assets only to Claude Code and Broca-owned sessions (mc-module lib.rs
+            // handle_guidance_value), which have no ctx_skill_note tool. So the skill-memory
+            // paragraph is TS-only by design. Check that it is present exactly where the fork
+            // puts it, then hold the rest of the text to byte parity with the upstream asset.
+            const forkParagraph = `${ctxSkillMemoryGuidance(true)}\n\n`;
+            let upstreamText = rendered;
+            if (preset === "full") {
+                expect(rendered.split(forkParagraph).length).toBe(2);
+                upstreamText = rendered.replace(forkParagraph, "");
+            } else {
+                expect(rendered).not.toContain("ctx_skill_note");
+            }
+            expect(asset).toBe(upstreamText);
         });
     }
 });

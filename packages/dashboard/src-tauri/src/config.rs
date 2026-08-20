@@ -43,6 +43,7 @@ pub const CANONICAL_DREAM_TASKS: [&str; 12] = [
     "review-user-memories",
     "promote-primers",
     "refresh-primers",
+    "distill-skill-memory",
 ];
 
 /// Default cron per task (mirrors DEFAULT_TASK_SCHEDULES in the plugin schema and
@@ -62,6 +63,7 @@ pub fn default_task_schedule(task: &str) -> &'static str {
         "review-user-memories" => "0 3 * * *",
         "promote-primers" => "0 3 * * *",
         "refresh-primers" => "0 3 * * *",
+        "distill-skill-memory" => "",
         _ => "",
     }
 }

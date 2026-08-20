@@ -11,3 +11,7 @@ export const CTX_MEMORY_LIGHT_DESCRIPTION =
 
 export const CTX_SEARCH_LIGHT_DESCRIPTION =
     'Search the archive — everything that ever happened here that is not on your desk: memories not in <project-memory>, compacted conversation, commits, notes. Phrase query as a natural-language question carrying the exact terms you expect ("where is the opencode source code path?", "why did we choose SQLite over postgres?", "how does the dreamer lease work?") — a keyword stack finds less. Sources (omit for all): memory (rules, conventions), message (compacted conversation; hits carry ordinals for ctx_expand), git_commit (when did this change), note (parked follow-ups). Memory ids alone (`#7234`) resolve directly. from/to restrict every source to an inclusive UTC date range.';
+
+export const CTX_SKILL_NOTE_LIGHT_DESCRIPTION = `For ctx_skill_note users, record one skill-scoped lesson after a skill load: skill, intent, kind (gotcha, discovery, fix, or workflow), and delta. Notes resurface automatically on the next load of that skill. Record only a deviation — a trap, a better approach, or an error and its fix; NEVER record a routine success, and NEVER record a general project fact because those belong in ctx_memory.`;
+
+export const CTX_SKILL_RECALL_LIGHT_DESCRIPTION = `For ctx_skill_recall users, query a named skill's accumulated notes without re-loading the skill, optionally scoped by intent. Use it for a skill already loaded this session; a fresh load surfaces its notes automatically, so recalling again is redundant.`;

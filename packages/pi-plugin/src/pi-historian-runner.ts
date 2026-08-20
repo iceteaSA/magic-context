@@ -52,6 +52,7 @@ import {
 } from "@magic-context/core/features/magic-context/memory";
 import { resolveProjectIdentityForSession } from "@magic-context/core/features/magic-context/memory/project-identity";
 import { getMemoriesByProject } from "@magic-context/core/features/magic-context/memory/storage-memory";
+import { promoteSkillObservations } from "@magic-context/core/features/magic-context/skill-memory/promote";
 import {
 	clearEmergencyDrainLatch,
 	clearEmergencyRecovery,
@@ -1594,6 +1595,28 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 				}
 			}
 
+			// Skill-memory historian extraction (Pi mirror of OpenCode): promote
+			// <skill_observations> into per-skill notes. Same promotionActive +
+			// !discardedLast gate as facts/primers so a provisional tail does not
+			// double-emit.
+			if (
+				promotionActive &&
+				!discardedLast &&
+				validatedPass.skillObservations &&
+				validatedPass.skillObservations.length > 0
+			) {
+				try {
+					const written = promoteSkillObservations(
+						db,
+						projectPath,
+						validatedPass.skillObservations,
+					);
+					sessionLog(sessionId, `promoted ${written} skill observation(s)`);
+				} catch (error) {
+					sessionLog(sessionId, "failed to promote skill observations:", error);
+				}
+			}
+
 			// Raw chunk embeddings: the ctx_search semantic substrate over session
 			// history. Fire-and-forget, best-effort, gated only by the embedding
 			// provider (`memory.enabled` does not affect it).
@@ -1760,6 +1783,13 @@ type ValidationOutcome =
 					? P
 					: never
 				: never;
+			skillObservations?: ReturnType<
+				typeof validateHistorianOutput
+			> extends infer T
+				? T extends { ok: true; skillObservations?: infer S }
+					? S
+					: never
+				: never;
 			events?: ReturnType<typeof validateHistorianOutput> extends infer T
 				? T extends { ok: true; events?: infer E }
 					? E
@@ -1802,6 +1832,7 @@ async function validateHistorianResult(
 			facts: validation.facts,
 			userObservations: validation.userObservations,
 			primerCandidates: validation.primerCandidates,
+			skillObservations: validation.skillObservations,
 			events: validation.events,
 		};
 	}

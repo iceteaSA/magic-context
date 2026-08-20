@@ -258,3 +258,17 @@ export function createDroppedInputToolExecuteBeforeHook() {
         });
     };
 }
+
+/**
+ * Run several `tool.execute.before` handlers under the single hook key OpenCode
+ * exposes. Handlers run in order and are NOT isolated from each other: the first
+ * to throw aborts the rest, which is the intended contract for guard handlers
+ * (a guard's rejection must pre-empt later side effects).
+ */
+export function composeToolExecuteBeforeHooks(
+    ...handlers: ReadonlyArray<(input: unknown, output: unknown) => unknown | Promise<unknown>>
+) {
+    return async (input: unknown, output: unknown): Promise<void> => {
+        for (const handler of handlers) await handler(input, output);
+    };
+}
