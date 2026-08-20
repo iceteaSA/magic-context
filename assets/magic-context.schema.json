@@ -1709,6 +1709,9 @@
             },
             "refresh-primers": {
               "schedule": "0 3 * * *"
+            },
+            "distill-skill-memory": {
+              "schedule": ""
             }
           },
           "type": "object",
@@ -1920,6 +1923,20 @@
                 "schedule": {
                   "default": "",
                   "x-mc-live-reload": true,
+                  "type": "string",
+                  "description": "5-field cron schedule (e.g. \"0 3 * * *\"), or \"\" to disable this task."
+                }
+              },
+              "additionalProperties": false
+            },
+            "distill-skill-memory": {
+              "default": {
+                "schedule": ""
+              },
+              "type": "object",
+              "properties": {
+                "schedule": {
+                  "default": "",
                   "type": "string",
                   "description": "5-field cron schedule (e.g. \"0 3 * * *\"), or \"\" to disable this task."
                 }

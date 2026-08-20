@@ -3,6 +3,7 @@
 import { describe, expect, it } from "bun:test";
 import { z } from "zod";
 import {
+    composeToolExecuteBeforeHooks,
     containsDroppedInputPlaceholder,
     createDroppedInputGuard,
     createDroppedInputToolExecuteBeforeHook,
@@ -207,5 +208,58 @@ describe("consecutive dropped input refusals", () => {
             { args: { command: "ls" } },
         );
         expect(await refusal()).not.toContain("in a row");
+    });
+});
+
+// OpenCode exposes ONE `tool.execute.before` key, but this plugin has two
+// independent duties for it (this guard, and skill-memory intent capture).
+// Registering both as object keys silently drops one; they are composed instead.
+// TS1117 catches the duplicate-key form at compile time — these lock the
+// composed runtime contract: every handler runs, in order, and a throw aborts
+// the rest so a guard's rejection pre-empts later side effects.
+describe("composeToolExecuteBeforeHooks", () => {
+    it("runs every handler in registration order", async () => {
+        const order: string[] = [];
+        await composeToolExecuteBeforeHooks(
+            async () => {
+                order.push("first");
+            },
+            async () => {
+                order.push("second");
+            },
+        )({ tool: "skill" }, { args: {} });
+        expect(order).toEqual(["first", "second"]);
+    });
+
+    it("aborts on the first throw so later handlers never observe rejected input", async () => {
+        const reached: string[] = [];
+        const composed = composeToolExecuteBeforeHooks(
+            createDroppedInputToolExecuteBeforeHook(),
+            async () => {
+                reached.push("after-guard");
+            },
+        );
+        await expect(
+            composed({ tool: "bash" }, { args: { command: "[dropped §431§]" } }),
+        ).rejects.toThrow();
+        expect(reached).toEqual([]);
+    });
+
+    it("passes the same input and output references to each handler", async () => {
+        const seen: Array<[unknown, unknown]> = [];
+        const input = { tool: "skill", callID: "call_1" };
+        const output = { args: { name: "council" } };
+        await composeToolExecuteBeforeHooks(
+            async (i, o) => {
+                seen.push([i, o]);
+            },
+            async (i, o) => {
+                seen.push([i, o]);
+            },
+        )(input, output);
+        expect(seen).toEqual([
+            [input, output],
+            [input, output],
+        ]);
     });
 });

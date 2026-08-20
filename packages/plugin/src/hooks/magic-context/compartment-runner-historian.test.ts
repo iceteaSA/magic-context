@@ -182,7 +182,11 @@ test("a timed-out primary historian falls back to the next model and publishes i
     expect(statuses).toContain("completed");
 });
 
-test("32k historian reaches the provider without a configured output cap and surfaces its assistant error", async () => {
+// Fork: upstream pins this at a 32k window, where its fixed historian prompt
+// (30,014 calibrated tokens) clears the 30,046 producer limit by 32 tokens.
+// The fork's <skill_observations> instructions add ~826 calibrated tokens, so
+// the fixture uses a 33k window; what the test checks is unchanged.
+test("small-window historian reaches the provider without a configured output cap and surfaces its assistant error", async () => {
     const directory = mkdtempSync(join(tmpdir(), "mc-historian-assistant-error-"));
     tempDirs.push(directory);
     process.env.XDG_DATA_HOME = directory;
@@ -219,7 +223,7 @@ test("32k historian reaches the provider without a configured output cap and sur
                         {
                             id: "google",
                             models: {
-                                "fixture-model": { limit: { context: 32_000, output: 1_024 } },
+                                "fixture-model": { limit: { context: 33_000, output: 1_024 } },
                             },
                         },
                     ],
