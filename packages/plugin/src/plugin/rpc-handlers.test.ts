@@ -7,6 +7,7 @@ import { insertMemory } from "../features/magic-context/memory";
 import { resolveProjectIdentity } from "../features/magic-context/memory/project-identity";
 import { FORK_MIGRATION_VERSION_FLOOR, runMigrations } from "../features/magic-context/migrations";
 import { upsertMural } from "../features/magic-context/mural/storage-mural";
+import { insertSkillMemoryNote } from "../features/magic-context/skill-memory/storage";
 import {
     getPersistedSchemaVersion,
     initializeDatabase,
@@ -752,7 +753,7 @@ describe("buildStatusDetail — mural read surface", () => {
 });
 
 describe("buildStatusDetail — cacheNeverExpires with 'never' TTL", () => {
-    test("sets cacheNeverExpires: true when cache_ttl is 'never'", () => {
+    test("sets cacheNeverExpires: true when cache_ttl is 'never'", async () => {
         const db = createTestDb();
         try {
             const sessionId = "ses-status-never";
@@ -767,7 +768,7 @@ describe("buildStatusDetail — cacheNeverExpires with 'never' TTL", () => {
                 "UPDATE session_meta SET cache_ttl = ?, last_response_time = ? WHERE session_id = ?",
             ).run("never", Date.now() - 60_000, sessionId);
 
-            const detail = buildStatusDetail(db, sessionId, directory);
+            const detail = await buildStatusDetail(db, sessionId, directory);
 
             expect(detail.cacheNeverExpires).toBe(true);
             expect(detail.cacheExpired).toBe(false);
@@ -788,22 +789,144 @@ describe("buildStatusDetail — cacheNeverExpires with 'never' TTL", () => {
 });
 
 describe("buildStatusDetail — Rust host paths", () => {
-    test("marks host paths module-side only for Rust mode", () => {
+    test("marks host paths module-side only for Rust mode", async () => {
         const db = createTestDb();
         try {
-            const rustDetail = buildStatusDetail(
+            const rustDetail = await buildStatusDetail(
                 db,
                 "ses-rust-host-paths",
                 process.cwd(),
                 undefined,
                 { transform_mode: "rust" },
             );
-            const tsDetail = buildStatusDetail(db, "ses-ts-host-paths", process.cwd(), undefined, {
-                transform_mode: "ts",
-            });
+            const tsDetail = await buildStatusDetail(
+                db,
+                "ses-ts-host-paths",
+                process.cwd(),
+                undefined,
+                { transform_mode: "ts" },
+            );
 
             expect(rustDetail.hostBackendsModuleSide).toBe(true);
             expect(tsDetail.hostBackendsModuleSide).toBe(false);
+        } finally {
+            closeQuietly(db);
+        }
+    });
+});
+
+describe("buildStatusDetail — skill memory section", () => {
+    test("seeds skill_memory rows → detail.skillMemory reflects totals/skills/pinned scoped to the project", async () => {
+        const db = createTestDb();
+        try {
+            const sessionId = "ses-status-skillmem-pop";
+            const directory = process.cwd();
+            const projectIdentity = resolveProjectIdentity(directory);
+
+            db.prepare(
+                "INSERT INTO session_meta (session_id, last_input_tokens, last_context_percentage) VALUES (?, 0, 0)",
+            ).run(sessionId);
+
+            // 3 notes for "tdd", 2 of them pinned
+            insertSkillMemoryNote(db, {
+                skillId: "tdd",
+                resolvedPath: "/p",
+                tier: "global",
+                skillSource: "opencode-global",
+                projectIdentity,
+                intent: "i1",
+                kind: "gotcha",
+                delta: "n1",
+                normalizedHash: "sm-pop-h1",
+                createdAt: Date.now(),
+            });
+            insertSkillMemoryNote(db, {
+                skillId: "tdd",
+                resolvedPath: "/p",
+                tier: "global",
+                skillSource: "opencode-global",
+                projectIdentity,
+                intent: "i2",
+                kind: "fix",
+                delta: "n2",
+                normalizedHash: "sm-pop-h2",
+                createdAt: Date.now(),
+            });
+            insertSkillMemoryNote(db, {
+                skillId: "tdd",
+                resolvedPath: "/p",
+                tier: "global",
+                skillSource: "opencode-global",
+                projectIdentity,
+                intent: "i3",
+                kind: "workflow",
+                delta: "n3",
+                normalizedHash: "sm-pop-h3",
+                createdAt: Date.now(),
+            });
+            db.prepare("UPDATE skill_memory SET pinned = 1 WHERE normalized_hash IN (?, ?)").run(
+                "sm-pop-h1",
+                "sm-pop-h2",
+            );
+
+            // 1 note for a different skill, not pinned
+            insertSkillMemoryNote(db, {
+                skillId: "debugging",
+                resolvedPath: "/p2",
+                tier: "global",
+                skillSource: "opencode-global",
+                projectIdentity,
+                intent: "i4",
+                kind: "discovery",
+                delta: "n4",
+                normalizedHash: "sm-pop-h4",
+                createdAt: Date.now(),
+            });
+
+            const detail = await buildStatusDetail(db, sessionId, directory);
+            expect(detail.skillMemory).not.toBeNull();
+            expect(detail.skillMemory?.totalNotes).toBe(4);
+            expect(detail.skillMemory?.skillsWithNotes).toBe(2);
+            expect(detail.skillMemory?.pinnedNotes).toBe(2);
+        } finally {
+            closeQuietly(db);
+        }
+    });
+
+    test("project-tier note under a different project identity does not count toward this project's stats (scoping isolation)", async () => {
+        const db = createTestDb();
+        try {
+            const sessionId = "ses-status-skillmem-noproj";
+            // Scoping check: a PROJECT-tier note under a different project identity
+            // must NOT count toward the resolved project's stats. (Global-tier notes
+            // are intentionally cross-project — stored under the '*' sentinel and
+            // counted everywhere per the F5 design — so a global fixture here would
+            // legitimately count; global counting is covered in storage.test.ts.
+            // Project-tier still partitions by real identity, which is what isolates.)
+            const directory = process.cwd();
+
+            db.prepare(
+                "INSERT INTO session_meta (session_id, last_input_tokens, last_context_percentage) VALUES (?, 0, 0)",
+            ).run(sessionId);
+
+            insertSkillMemoryNote(db, {
+                skillId: "tdd",
+                resolvedPath: "/p",
+                tier: "project",
+                skillSource: "opencode-project",
+                projectIdentity: "git:some-other-project",
+                intent: "i",
+                kind: "gotcha",
+                delta: "isolated",
+                normalizedHash: "sm-iso-h1",
+                createdAt: Date.now(),
+            });
+
+            const detail = await buildStatusDetail(db, sessionId, directory);
+            expect(detail.skillMemory).not.toBeNull();
+            expect(detail.skillMemory?.totalNotes).toBe(0);
+            expect(detail.skillMemory?.skillsWithNotes).toBe(0);
+            expect(detail.skillMemory?.pinnedNotes).toBe(0);
         } finally {
             closeQuietly(db);
         }

@@ -856,7 +856,12 @@ export function createMagicContextCommandHandler(deps: {
                                 ? (rustTailHygiene as WireTailHygieneBaseline)
                                 : undefined,
                         );
-                        const statusOutput = executeStatus(
+                        // Use dreamer's directory when available (== project's working
+                        // directory for dreamer-aware sessions); fall back to cwd so
+                        // the "Skill memory" section can resolve a project identity
+                        // for sessions that don't have dreamer configured.
+                        const statusDirectory = deps.dreamer?.projectPath ?? process.cwd();
+                        const statusOutput = await executeStatus(
                             deps.db,
                             sessionId,
                             deps.protectedTags,
@@ -885,6 +890,7 @@ export function createMagicContextCommandHandler(deps: {
                                 cacheTtlConfigured: deps.cacheTtlConfigured === true,
                                 configParseFailures: deps.configParseFailures ?? [],
                             },
+                            statusDirectory,
                         );
                         const moduleStatus = rustStatus
                             ? `\n\n${formatRustStatusText(rustStatus)}`
@@ -902,8 +908,9 @@ export function createMagicContextCommandHandler(deps: {
                     );
                     combinedStatus = rustMode
                         ? "## Magic Status — Unavailable\n\nRust module status failed while formatting. Canonical session usage, tags, and compartments live in mc-store, so context.db mirror values are intentionally omitted."
-                        : executeStatus(deps.db, sessionId, deps.protectedTags);
+                        : await executeStatus(deps.db, sessionId, deps.protectedTags);
                 }
+
                 result += result ? `\n\n${combinedStatus}` : combinedStatus;
             }
 

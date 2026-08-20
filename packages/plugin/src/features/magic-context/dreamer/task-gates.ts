@@ -292,6 +292,14 @@ export function getDreamTaskBacklog(
             const total = countActivePrimers(db, projectPath);
             return { pending: countStalePrimers(db, projectPath), total };
         }
+        case "distill-skill-memory": {
+            // Mirrors the always-eligible gate in evaluateTaskGate: the distill
+            // pass is whole-corpus maintenance with no per-item queue, so there
+            // is no meaningful pending count to surface. Reported as 0/0 rather
+            // than reaching into skill_memory internals the scheduler does not
+            // otherwise depend on.
+            return { pending: 0, total: 0 };
+        }
         default: {
             const _exhaustive: never = task;
             return _exhaustive;
@@ -388,6 +396,13 @@ export function evaluateTaskGate(task: DreamTaskName, ctx: TaskGateContext): boo
                     primer.answerRefreshedAt == null ||
                     (primer.lastObservedAt ?? 0) > primer.answerRefreshedAt,
             );
+
+        case "distill-skill-memory":
+            // Agentic opt-in task: when scheduled, always eligible. The reembed
+            // pre-step + distill prompt no-op gracefully on an empty corpus, so a
+            // cheap always-true gate avoids coupling the scheduler to skill_memory
+            // table internals.
+            return true;
 
         default: {
             const _exhaustive: never = task;

@@ -35,6 +35,7 @@ import {
     type FailClosedBlockingProcess,
     type FailClosedProcessKind,
 } from "./fail-closed-block";
+import { runForkMigrations, runForkMigrationsWithRetry } from "./fork-migrations";
 import { startMessageFtsRowidMapBackfill } from "./message-fts-rowid-map";
 import { FORK_MIGRATION_VERSION_FLOOR, runMigrations, runMigrationsWithRetry } from "./migrations";
 import { ensureColumn, healAllNullColumns } from "./storage-schema-helpers";
@@ -1266,6 +1267,40 @@ export function initializeDatabase(
     CREATE INDEX IF NOT EXISTS idx_memory_mutation_log_target
       ON memory_mutation_log(project_path, target_memory_id, id);
 
+    CREATE TABLE IF NOT EXISTS skill_memory (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      skill_id        TEXT NOT NULL,
+      resolved_path   TEXT NOT NULL,
+      tier            TEXT NOT NULL CHECK(tier IN ('project', 'global')),
+      skill_source    TEXT CHECK(skill_source IN (
+                        'opencode-project', 'opencode-global',
+                        'claude-skills', 'agents-skills'
+                      )),
+      project_identity TEXT NOT NULL,
+      intent          TEXT NOT NULL,
+      intent_embedding BLOB,
+      embedding_model_version TEXT,
+      kind            TEXT NOT NULL CHECK(kind IN ('gotcha', 'discovery', 'fix', 'workflow')),
+      delta           TEXT NOT NULL,
+      tags            TEXT,
+      hit_count       INTEGER NOT NULL DEFAULT 0,
+      pinned          INTEGER NOT NULL DEFAULT 0 CHECK(pinned IN (0, 1)),
+      normalized_hash TEXT NOT NULL,
+      created_at      INTEGER NOT NULL,
+      last_used_at    INTEGER,
+      delta_embedding BLOB,
+      recall_count INTEGER NOT NULL DEFAULT 0,
+      origin_project TEXT,
+      source_type TEXT,
+      UNIQUE(skill_id, tier, project_identity, normalized_hash)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_skill_memory_lookup
+      ON skill_memory(skill_id, tier, project_identity, last_used_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_skill_memory_fts_prep
+      ON skill_memory(skill_id, tier, project_identity, kind);
+
     CREATE TABLE IF NOT EXISTS dream_state (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -1421,6 +1456,14 @@ CREATE INDEX IF NOT EXISTS idx_dream_queue_pending ON dream_queue(started_at, en
       tokenize='porter unicode61'
     );
 
+    CREATE VIRTUAL TABLE IF NOT EXISTS skill_memory_fts USING fts5(
+      intent,
+      delta,
+      content='skill_memory',
+      content_rowid='id',
+      tokenize='porter unicode61'
+    );
+
     CREATE VIRTUAL TABLE IF NOT EXISTS message_history_fts USING fts5(
       session_id UNINDEXED,
       message_ordinal UNINDEXED,
@@ -1493,6 +1536,19 @@ CREATE INDEX IF NOT EXISTS idx_dream_queue_pending ON dream_queue(started_at, en
     CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
       INSERT INTO memories_fts(memories_fts, rowid, content, category) VALUES ('delete', old.id, old.content, old.category);
       INSERT INTO memories_fts(rowid, content, category) VALUES (new.id, new.content, new.category);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS skill_memory_ai AFTER INSERT ON skill_memory BEGIN
+      INSERT INTO skill_memory_fts(rowid, intent, delta) VALUES (new.id, new.intent, new.delta);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS skill_memory_ad AFTER DELETE ON skill_memory BEGIN
+      INSERT INTO skill_memory_fts(skill_memory_fts, rowid, intent, delta) VALUES ('delete', old.id, old.intent, old.delta);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS skill_memory_au AFTER UPDATE ON skill_memory BEGIN
+      INSERT INTO skill_memory_fts(skill_memory_fts, rowid, intent, delta) VALUES ('delete', old.id, old.intent, old.delta);
+      INSERT INTO skill_memory_fts(rowid, intent, delta) VALUES (new.id, new.intent, new.delta);
     END;
 
     CREATE TABLE IF NOT EXISTS session_meta (
@@ -1730,6 +1786,26 @@ CREATE INDEX IF NOT EXISTS idx_dream_queue_pending ON dream_queue(started_at, en
     CREATE INDEX IF NOT EXISTS idx_message_history_index_updated_at ON message_history_index(updated_at);
   `);
 
+    // Self-heal: backfill skill_memory_fts if it's empty while skill_memory has
+    // rows. The CREATE TABLE/TRIGGER block above only indexes FUTURE writes; rows
+    // that predate the FTS table (e.g. a DB where v50 ran but v51 hadn't, or a
+    // lost migration row) would be invisible to FTS rung-3 recall until re-saved.
+    // Guarded so this fires once (on the gap), not on every boot. Mirrors v51's
+    // INSERT INTO skill_memory_fts(skill_memory_fts) VALUES('rebuild').
+    try {
+        const ftsCount = (
+            db.prepare("SELECT COUNT(*) AS n FROM skill_memory_fts").get() as { n: number }
+        ).n;
+        const rowCount = (
+            db.prepare("SELECT COUNT(*) AS n FROM skill_memory").get() as { n: number }
+        ).n;
+        if (ftsCount === 0 && rowCount > 0) {
+            db.exec("INSERT INTO skill_memory_fts(skill_memory_fts) VALUES('rebuild');");
+        }
+    } catch {
+        // Non-fatal: FTS rung-3 degrades gracefully (embedding + flat recall unaffected).
+    }
+
     ensureColumn(db, "primer_candidates", "harness", "TEXT NOT NULL DEFAULT 'opencode'");
     ensureColumn(db, "primer_candidates", "source_start_message_id", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(db, "primer_candidates", "source_end_message_id", "TEXT NOT NULL DEFAULT ''");
@@ -1831,6 +1907,10 @@ CREATE INDEX IF NOT EXISTS idx_dream_queue_pending ON dream_queue(started_at, en
     ensureColumn(db, "compartments", "start_message_id", "TEXT DEFAULT ''");
     ensureColumn(db, "compartments", "end_message_id", "TEXT DEFAULT ''");
     ensureColumn(db, "memory_embeddings", "model_id", "TEXT");
+    ensureColumn(db, "skill_memory", "delta_embedding", "BLOB");
+    ensureColumn(db, "skill_memory", "recall_count", "INTEGER NOT NULL DEFAULT 0");
+    ensureColumn(db, "skill_memory", "origin_project", "TEXT");
+    ensureColumn(db, "skill_memory", "source_type", "TEXT");
     ensureColumn(db, "session_meta", "memory_block_cache", "TEXT DEFAULT ''");
     ensureColumn(db, "session_meta", "memory_block_count", "INTEGER DEFAULT 0");
     ensureColumn(db, "session_meta", "pi_stable_id_scheme", "INTEGER");
@@ -2298,6 +2378,7 @@ export function openDatabase(dbPathOrOptions?: string | OpenDatabaseOptions): Da
         }
         initializeDatabase(db, busyTimeoutMs);
         runMigrations(db);
+        runForkMigrations(db);
         ensureContextStoreUuid(db);
         return finishDatabaseOpen(db, dbPath, explicitDbPath, latestSupportedVersion);
     } catch (error) {
@@ -2376,6 +2457,7 @@ export async function openDatabaseAsync(
             migrateStartedAt = performance.now();
             initializeDatabase(db, busyTimeoutMs);
             await runMigrationsWithRetry(db);
+            await runForkMigrationsWithRetry(db);
             ensureContextStoreUuid(db);
             const opened = finishDatabaseOpen(db, dbPath, explicitDbPath, latestSupportedVersion);
             migrateMs = performance.now() - migrateStartedAt;

@@ -142,7 +142,7 @@ export function registerCtxStatusCommand(
 					liveInputTokens: usage?.tokens,
 					usableContextLimit,
 				});
-				const statusText = executeStatus(
+				const statusText = await executeStatus(
 					currentDeps.db,
 					sessionId,
 					currentDeps.protectedTags ?? 20,

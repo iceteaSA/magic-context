@@ -3,6 +3,7 @@
 import { describe, expect, mock, test } from "bun:test";
 
 import { runMigrations } from "../../features/magic-context/migrations";
+import { insertSkillMemoryNote } from "../../features/magic-context/skill-memory/storage";
 import { initializeDatabase } from "../../features/magic-context/storage-db";
 import {
     getOrCreateSessionMeta,
@@ -22,6 +23,7 @@ import {
     createCommandExecuteBeforeHook,
     createEventHook,
     createToolExecuteAfterHook,
+    maybeInjectSkillMemory,
 } from "./hook-handlers";
 import { registerLkgPersistence } from "./lkg-slot";
 import type { MessageLike } from "./tag-messages";
@@ -34,10 +36,21 @@ function createTestDb(): Database {
     return db;
 }
 
+const CFG = {
+    enabled: true as const,
+    max_tokens: 1500,
+    max_pinned_tokens: 4000,
+    dedup_threshold: 0.92,
+};
+
 function createTestHook(db: Database): ReturnType<typeof createToolExecuteAfterHook> {
     return createToolExecuteAfterHook({
         db,
         channel1StateBySession: new Map(),
+        skillLoadRegistry: new Map(),
+        sessionDirectoryBySession: new Map(),
+        defaultDirectory: "/tmp/test",
+        intentByCallId: new Map(),
     });
 }
 
@@ -1086,6 +1099,34 @@ describe("createToolExecuteAfterHook Channel-1 dampening", () => {
                     .prepare("SELECT last_nudge_level FROM session_meta WHERE session_id = ?")
                     .get(sessionId),
             ).toEqual({ last_nudge_level: '{"level":"firm","ordinal":1}' });
+        } finally {
+            closeQuietly(db);
+        }
+    });
+});
+
+describe("maybeInjectSkillMemory intent threading", () => {
+    test("maybeInjectSkillMemory threads intent → FTS rung (vs no-intent without it)", async () => {
+        const db = createTestDb();
+        try {
+            insertSkillMemoryNote(db, {
+                skillId: "tdd",
+                resolvedPath: "/p/SKILL.md",
+                tier: "global",
+                skillSource: "opencode-global",
+                projectIdentity: "git:abc",
+                intent: "fix the auth flake",
+                kind: "fix",
+                delta: "stub the clock",
+                normalizedHash: "h1",
+                createdAt: Date.now(),
+            });
+            const withIntent = { output: "# tool result" };
+            await maybeInjectSkillMemory(db, "tdd", "global", "git:abc", CFG, withIntent, "auth");
+            expect(withIntent.output).toContain('mode="fts5-fallback"');
+            const noIntent = { output: "# tool result" };
+            await maybeInjectSkillMemory(db, "tdd", "global", "git:abc", CFG, noIntent, undefined);
+            expect(noIntent.output).toContain('mode="no-intent"');
         } finally {
             closeQuietly(db);
         }

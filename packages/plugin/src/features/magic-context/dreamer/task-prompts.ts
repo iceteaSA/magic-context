@@ -366,6 +366,38 @@ const STRUCTURE_TEMPLATE = `
 **Tests:** co-located with source as \\\`*.test.ts\\\`
 \`\`\``;
 
+// ── Distill Skill Memory ───────────────────────────────────────────────────
+
+function buildDistillSkillMemoryPrompt(projectPath: string): string {
+    return `## Task: Distill Skill Memory (P2 — read-only health report)
+
+**Project:** ${projectPath}
+
+### Important context
+- Embedding refresh for NULL/stale vectors already ran programmatically BEFORE this prompt — no need to re-embed.
+- Merge (action="distill" + merge), prune, and promote are P3 / NOT YET IMPLEMENTED. Do NOT call ctx_skill_note with action="distill".
+
+### Your task: produce a short read-only summary of skill-memory corpus health
+1. Query aggregate counts and flag obvious issues (scoped to THIS project's
+   own notes plus the cross-project global '*' partition):
+   \`\`\`sql
+   SELECT skill_id, tier, COUNT(*) as note_count,
+          SUM(CASE WHEN pinned = 1 THEN 1 ELSE 0 END) as pinned_count,
+          SUM(CASE WHEN intent_embedding IS NULL OR delta_embedding IS NULL THEN 1 ELSE 0 END) as missing_embedding_count
+   FROM skill_memory
+   WHERE project_identity IN ('${projectPath.replace(/'/g, "''")}', '*')
+   GROUP BY skill_id, tier
+   ORDER BY note_count DESC
+   LIMIT 20;
+   \`\`\`
+2. Note any skills with >100 notes, >30% gotcha-kind notes, or obvious near-duplicates (same skill + kind + very similar delta text).
+3. Report findings as a short summary — no tool calls beyond read-only SQL queries.
+
+### Success criteria
+- A concise health summary is logged (via ctx_memory) for the project maintainer to review.
+- No tool calls to unimplemented actions.`;
+}
+
 // ── Dispatcher ─────────────────────────────────────────────────────────────
 
 export function buildDreamTaskPrompt(
@@ -391,5 +423,7 @@ export function buildDreamTaskPrompt(
                 args.lastDreamAt ?? null,
                 args.existingDocs ?? { architecture: false, structure: false },
             );
+        case "distill-skill-memory":
+            return buildDistillSkillMemoryPrompt(args.projectPath);
     }
 }

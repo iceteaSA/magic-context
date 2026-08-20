@@ -75,6 +75,29 @@ export function extractToolCallSummaries(parts: unknown[]): string[] {
         const input = state.input as Record<string, unknown> | null;
         const metadata = state.metadata as Record<string, unknown> | null;
 
+        // Skill tool: surface the skill name (input.name) before the description
+        // fallback, which would otherwise mask it if metadata.description exists.
+        // The name is an IDENTITY key — the historian extracts the skill-id from
+        // this marker and recall keys on the raw input.name, so the marker name
+        // MUST equal the raw name (no truncation, no mutation) or the stored id
+        // won't match recall. Emit it VERBATIM when marker-safe; if it contains a
+        // marker-breaking char (CR/LF/tab/")") — which a real skill directory name
+        // never does — drop the name (`TC: skill`) rather than emit a corrupted or
+        // mutated identity.
+        if (p.tool === "skill") {
+            const rawName = input && typeof input.name === "string" ? input.name : "";
+            // Only CR/LF/tab genuinely corrupt the single-line `TC: skill(<name>)`
+            // marker; a ")" does NOT break the line and the historian reads the
+            // marker as natural language (not a strict paren-matched parse), so a
+            // ")"-containing name is preserved VERBATIM rather than dropped —
+            // dropping the name loses historian attribution + recall keying, which
+            // is worse than a cosmetically-ambiguous paren. (Real skill directory
+            // names are slugs; this is defensive.)
+            const markerSafe = rawName !== "" && !/[\r\n\t]/.test(rawName);
+            summaries.push(markerSafe ? `TC: skill(${rawName})` : "TC: skill");
+            continue;
+        }
+
         // Prefer explicit description (bash tool always has one)
         const description =
             (input && typeof input.description === "string" && input.description) ||
