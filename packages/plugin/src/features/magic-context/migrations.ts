@@ -22,13 +22,15 @@ export const FORK_MIGRATION_VERSION_FLOOR = 10_000;
  * 3. The migration runs in a transaction — if it throws, it rolls back
  */
 
-interface Migration {
+export interface Migration {
     version: number;
     description: string;
     up: (db: Database) => void;
 }
 
-const MIGRATION_LOCK_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000] as const;
+// Exported for the downstream-lane runner in fork-migrations.ts, so the fork pass
+// retries on the same schedule as the upstream pass instead of drifting a copy.
+export const MIGRATION_LOCK_RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000] as const;
 
 export class MigrationLockBusyError extends Error {
     constructor(message: string) {
@@ -37,7 +39,7 @@ export class MigrationLockBusyError extends Error {
     }
 }
 
-function isSqliteLockError(error: unknown): boolean {
+export function isSqliteLockError(error: unknown): boolean {
     if (!error || typeof error !== "object") return false;
     const candidate = error as { code?: unknown; message?: unknown };
     if (candidate.code === "SQLITE_BUSY" || candidate.code === "SQLITE_LOCKED") return true;

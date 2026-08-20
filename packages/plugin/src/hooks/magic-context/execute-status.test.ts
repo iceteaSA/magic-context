@@ -14,7 +14,7 @@ import { estimateTokens } from "./read-session-formatting";
 const SESSION_ID = "ses_execute_status";
 
 describe("executeStatus", () => {
-    test("attributes history tokens using rendered compartment headings", () => {
+    test("attributes history tokens using rendered compartment headings", async () => {
         const db = new Database(":memory:");
         initializeDatabase(db);
         getOrCreateSessionMeta(db, SESSION_ID);
@@ -22,14 +22,14 @@ describe("executeStatus", () => {
             "INSERT INTO compartments (session_id, sequence, start_message, end_message, start_message_id, end_message_id, title, content, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
         ).run(SESSION_ID, 1, 12, 34, "m12", "m34", "Status arc", "status body", Date.now());
 
-        const status = executeStatus(db, SESSION_ID);
+        const status = await executeStatus(db, SESSION_ID, 20);
         const expected = estimateTokens("## 12-34 · Status arc\nstatus body\n");
 
         expect(status).toContain(`- History block: ~${expected.toLocaleString()} tokens`);
         db.close();
     });
 
-    test("annotates the execute threshold when a tokens config is clamped (#241)", () => {
+    test("annotates the execute threshold when a tokens config is clamped (#241)", async () => {
         const db = new Database(":memory:");
         initializeDatabase(db);
         getOrCreateSessionMeta(db, SESSION_ID);
@@ -37,7 +37,7 @@ describe("executeStatus", () => {
         // 190K requested on a 128K model → clamped to 90% × 128K. The status must
         // say so explicitly (configured value + cap) rather than silently showing
         // the reduced value, which is what confused users in issue #241.
-        const status = executeStatus(
+        const status = await executeStatus(
             db,
             SESSION_ID,
             65,
@@ -53,12 +53,12 @@ describe("executeStatus", () => {
         db.close();
     });
 
-    test("omits the clamp annotation when the threshold is not clamped (#241)", () => {
+    test("omits the clamp annotation when the threshold is not clamped (#241)", async () => {
         const db = new Database(":memory:");
         initializeDatabase(db);
         getOrCreateSessionMeta(db, SESSION_ID);
 
-        const status = executeStatus(
+        const status = await executeStatus(
             db,
             SESSION_ID,
             65,
@@ -74,12 +74,12 @@ describe("executeStatus", () => {
         db.close();
     });
 
-    test("shows the exact nudge hygiene ratio and keeps zero values", () => {
+    test("shows the exact nudge hygiene ratio and keeps zero values", async () => {
         const db = new Database(":memory:");
         initializeDatabase(db);
         getOrCreateSessionMeta(db, SESSION_ID);
 
-        const status = executeStatus(
+        const status = await executeStatus(
             db,
             SESSION_ID,
             undefined,
@@ -107,7 +107,7 @@ describe("executeStatus", () => {
         db.close();
     });
 
-    test("renders 'never expires' for cacheTtl 'never'", () => {
+    test("renders 'never expires' for cacheTtl 'never'", async () => {
         const db = new Database(":memory:");
         initializeDatabase(db);
         getOrCreateSessionMeta(db, SESSION_ID);
@@ -115,7 +115,7 @@ describe("executeStatus", () => {
             SESSION_ID,
         );
 
-        const status = executeStatus(db, SESSION_ID);
+        const status = await executeStatus(db, SESSION_ID, 20);
 
         expect(status).toContain("- Cache TTL: never (session)");
         expect(status).toContain(
@@ -126,7 +126,7 @@ describe("executeStatus", () => {
         db.close();
     });
 
-    test("puts the missing OpenCode store before parse failures and keeps configured TTL read-only", () => {
+    test("puts the missing OpenCode store before parse failures and keeps configured TTL read-only", async () => {
         const originalOpenCodeDb = process.env.OPENCODE_DB;
         process.env.OPENCODE_DB = ":memory:";
         resetOpenCodeDbPathStateForTesting();
@@ -144,7 +144,7 @@ describe("executeStatus", () => {
             warning: "/tmp/magic-context.jsonc:1:1: invalid symbol",
         };
 
-        const status = executeStatus(
+        const status = await executeStatus(
             db,
             SESSION_ID,
             undefined,
@@ -179,13 +179,13 @@ describe("executeStatus", () => {
         resetOpenCodeDbPathStateForTesting();
     });
 
-    test("shows module-routed host paths only in Rust mode", () => {
+    test("shows module-routed host paths only in Rust mode", async () => {
         const db = new Database(":memory:");
         initializeDatabase(db);
         getOrCreateSessionMeta(db, SESSION_ID);
 
-        const tsStatus = executeStatus(db, SESSION_ID);
-        const rustStatus = executeStatus(
+        const tsStatus = await executeStatus(db, SESSION_ID, 20);
+        const rustStatus = await executeStatus(
             db,
             SESSION_ID,
             undefined,

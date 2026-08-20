@@ -796,7 +796,12 @@ export function createMagicContextCommandHandler(deps: {
                                 ? (rustTailHygiene as WireTailHygieneBaseline)
                                 : undefined,
                         );
-                        const statusOutput = executeStatus(
+                        // Use dreamer's directory when available (== project's working
+                        // directory for dreamer-aware sessions); fall back to cwd so
+                        // the "Skill memory" section can resolve a project identity
+                        // for sessions that don't have dreamer configured.
+                        const statusDirectory = deps.dreamer?.projectPath ?? process.cwd();
+                        const statusOutput = await executeStatus(
                             deps.db,
                             sessionId,
                             deps.executeThresholdPercentage,
@@ -826,6 +831,7 @@ export function createMagicContextCommandHandler(deps: {
                                 diagnostics: statusDiagnostics,
                                 compactionEnabled: !deps.compactionOff,
                             },
+                            statusDirectory,
                         );
                         const moduleStatus =
                             rustStatus && statusDiagnostics
@@ -845,8 +851,9 @@ export function createMagicContextCommandHandler(deps: {
                     );
                     combinedStatus = rustMode
                         ? `## Magic Status — Unavailable\n\n${renderUserFacingFailure("status_unavailable")}`
-                        : executeStatus(deps.db, sessionId);
+                        : await executeStatus(deps.db, sessionId);
                 }
+
                 result += result ? `\n\n${combinedStatus}` : combinedStatus;
             }
 

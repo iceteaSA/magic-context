@@ -23,6 +23,9 @@ export const CANONICAL_DREAM_TASKS = [
     "review-user-memories",
     "promote-primers",
     "refresh-primers",
+    // Opt-in: distills per-skill memory (merge/prune/promote). Runs only when
+    // scheduled (schedule != ""); requires the skill_memory table + feature.
+    "distill-skill-memory",
 ] as const;
 
 export type DreamTaskName = (typeof CANONICAL_DREAM_TASKS)[number];
@@ -44,6 +47,9 @@ export const DREAM_TASK_CAPABILITIES: Record<DreamTaskName, { requiresTools: boo
     "review-user-memories": { requiresTools: true },
     "promote-primers": { requiresTools: true },
     "refresh-primers": { requiresTools: true },
+    // Agentic like curate/maintain-docs: the child reads the skill-memory pool
+    // through tools before it can report or distill.
+    "distill-skill-memory": { requiresTools: true },
 };
 
 /** Cheap, read-only work counts for one Dreamer task. */
@@ -102,7 +108,7 @@ export function processedDreamTaskItems(startPending: number, endPending: number
  * primers, retrospective) have their own specialized runners and do NOT go
  * through the prompt builder.
  */
-export const AGENTIC_DREAM_TASKS = ["curate", "maintain-docs"] as const;
+export const AGENTIC_DREAM_TASKS = ["curate", "maintain-docs", "distill-skill-memory"] as const;
 
 /**
  * Tasks that read-modify-write the project `memories` table (+ epoch +
