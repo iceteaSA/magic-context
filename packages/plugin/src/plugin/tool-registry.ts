@@ -3,6 +3,7 @@ import type { MagicContextPluginConfig } from "../config";
 import { isCompactionEnabled, isDreamerRunnable } from "../config/agent-disable";
 import { resolveProjectIdentityForSession } from "../features/magic-context/memory/project-identity";
 import { getProtectionWindowForSession } from "../features/magic-context/protection-window";
+import type { SkillLoadRegistry } from "../features/magic-context/skill-memory/provenance";
 import {
     getDatabasePersistenceError,
     isDatabasePersisted,
@@ -25,6 +26,8 @@ import {
 import { createCtxNoteTools } from "../tools/ctx-note";
 import { createCtxReduceTools } from "../tools/ctx-reduce";
 import { createCtxSearchTools } from "../tools/ctx-search";
+import { CTX_SKILL_NOTE_TOOL_NAME, createCtxSkillNoteTool } from "../tools/ctx-skill-note";
+import { CTX_SKILL_RECALL_TOOL_NAME, createCtxSkillRecallTool } from "../tools/ctx-skill-recall";
 import { parameterDescriptionsFor } from "../tools/parameter-descriptions";
 import { ensureProjectRegisteredFromOpenCodeDirectory } from "./embedding-bootstrap";
 import { normalizeToolArgSchemas } from "./normalize-tool-arg-schemas";
@@ -64,6 +67,7 @@ export function createToolRegistry(args: {
     promptSurfaceRuntime?: PromptSurfaceRuntime;
     registrationPromptSurface?: PromptSurfaceConfig;
     includeDreamerOnlyTools?: boolean;
+    skillLoadRegistry: SkillLoadRegistry;
 }): Record<string, ToolDefinition> {
     const { ctx, pluginConfig, rustToolBackends } = args;
 
@@ -184,6 +188,28 @@ export function createToolRegistry(args: {
                   rustToolBackends,
               })
             : {}),
+        // ctx_skill_note: skill-specific memory tool. Reads the session-scoped
+        // skillLoadRegistry to verify the skill was actually loaded this session
+        // before allowing a note to be written. The fail-loud guard for a missing
+        // registry lives in index.ts (the only place hooks.magicContext is in
+        // scope) so a wiring regression is caught at startup, not at runtime.
+        // NOT gated on memoryEnabled — skill-memory is an independent store.
+        [CTX_SKILL_NOTE_TOOL_NAME]: createCtxSkillNoteTool({
+            db,
+            skillLoadRegistry: args.skillLoadRegistry,
+        }),
+        // ctx_skill_recall: explicit agent-callable recall tool. Registry-first
+        // (reuses the already-parsed frontmatterConfig from the transparent path)
+        // with disk-fallback for cold-start sessions where the skill hasn't been
+        // loaded yet. projectDirectory is a fallback only — execute() prefers
+        // toolContext.directory (the session's actual working dir) so `opencode -s`
+        // from outside the project resolves correctly. No fail-loud guard needed:
+        // skillLoadRegistry is optional for ctx_skill_recall.
+        [CTX_SKILL_RECALL_TOOL_NAME]: createCtxSkillRecallTool({
+            db,
+            projectDirectory: ctx.directory,
+            skillLoadRegistry: args.skillLoadRegistry,
+        }),
     };
 
     const promptSurfaceRuntime =

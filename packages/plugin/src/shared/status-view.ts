@@ -160,6 +160,32 @@ export interface StatusViewSource {
     /** Failure codes to print under the sections, already selected by the host. */
     readonly warnings?: readonly UserFacingFailureKey[];
     readonly hiddenVariantWarnings?: readonly string[];
+    /** Skill-memory store aggregate; present only when a project identity resolved. */
+    readonly skillMemory?: {
+        readonly totalNotes: number;
+        readonly skillsWithNotes: number;
+        readonly pinnedNotes: number;
+    };
+}
+
+/** Skill-memory store section (fork feature); empty when the host sent no aggregate. */
+function skillMemorySections(source: StatusViewSource): StatusSection[] {
+    const sm = source.skillMemory;
+    if (!sm) return [];
+    return [
+        {
+            title: "Skill Memory",
+            labelWidth: 7,
+            rows: [
+                {
+                    label: "Notes",
+                    value: `${sm.totalNotes} (${sm.skillsWithNotes} ${sm.skillsWithNotes === 1 ? "skill" : "skills"})`,
+                    tone: "accent",
+                },
+                { label: "Pinned", value: String(sm.pinnedNotes), tone: "muted" },
+            ],
+        },
+    ];
 }
 
 export interface StatusViewOptions {
@@ -561,7 +587,12 @@ function statusSections(source: StatusViewSource, now: number): StatusSection[] 
                       ],
                   },
               ];
-    if (!compactionEnabled(source)) return [...knowledgeSections(source, now), ...configSection];
+    if (!compactionEnabled(source))
+        return [
+            ...knowledgeSections(source, now),
+            ...skillMemorySections(source),
+            ...configSection,
+        ];
     return [
         { title: "Tags", labelWidth: 8, rows: tagRows(source) },
         {
@@ -623,6 +654,7 @@ function statusSections(source: StatusViewSource, now: number): StatusSection[] 
                 { label: "Injected", value: String(source.memoryBlockCount), tone: "muted" },
             ],
         },
+        ...skillMemorySections(source),
     ];
 }
 

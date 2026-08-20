@@ -47,6 +47,12 @@ export interface ParsedPrimerCandidate {
     originCompartmentIndex?: number;
 }
 
+export interface ParsedSkillObservation {
+    skillId: string;
+    kind: "gotcha" | "discovery" | "fix" | "workflow";
+    lesson: string;
+}
+
 export interface ParsedCompartmentOutput {
     compartments: ParsedCompartment[];
     facts: ParsedFact[];
@@ -56,6 +62,7 @@ export interface ParsedCompartmentOutput {
     unprocessedFrom: number | null;
     userObservations: string[];
     primerCandidates: ParsedPrimerCandidate[];
+    skillObservations: ParsedSkillObservation[];
 }
 
 // Open tag captured separately from body so attributes (start/end/title/
@@ -101,6 +108,9 @@ const PRIMER_CANDIDATES_REGEX = /<primer_candidates>(.*?)<\/primer_candidates>/s
 // (*/-/1.) is still accepted and falls back to the chunk span at emission.
 const PRIMER_ELEMENT_REGEX = /<primer\s+at_compartment="(\d+)"\s*>(.*?)<\/primer>/gs;
 const PRIMER_ITEM_REGEX = /^\s*(?:\*|-|\d+\.)\s*(.+)$/gm;
+const SKILL_OBSERVATIONS_REGEX = /<skill_observations>(.*?)<\/skill_observations>/s;
+const SKILL_OBS_ITEM_REGEX = /^\s*\*\s*([^|\n]+)\|([^|\n]+)\|([^\n]+)$/gm;
+const SKILL_OBS_KINDS = new Set(["gotcha", "discovery", "fix", "workflow"]);
 
 // Events: scan the <events>…</events> block (if any) for event elements. Kinds
 // are parsed kind-agnostically — any element with an `at_compartment` attr is an
@@ -297,6 +307,23 @@ export function parseCompartmentOutput(text: string): ParsedCompartmentOutput {
         }
     }
 
+    const skillObservations: ParsedSkillObservation[] = [];
+    const skillObsMatch = text.match(SKILL_OBSERVATIONS_REGEX);
+    if (skillObsMatch) {
+        for (const itemMatch of skillObsMatch[1].matchAll(SKILL_OBS_ITEM_REGEX)) {
+            const skillId = unescapeXml(itemMatch[1].trim());
+            const kind = itemMatch[2].trim();
+            const lesson = unescapeXml(itemMatch[3].trim());
+            if (skillId && lesson && SKILL_OBS_KINDS.has(kind)) {
+                skillObservations.push({
+                    skillId,
+                    kind: kind as ParsedSkillObservation["kind"],
+                    lesson,
+                });
+            }
+        }
+    }
+
     const events = parseEvents(text);
 
     compartments.sort((a, b) => a.startMessage - b.startMessage);
@@ -310,6 +337,7 @@ export function parseCompartmentOutput(text: string): ParsedCompartmentOutput {
         unprocessedFrom,
         userObservations,
         primerCandidates,
+        skillObservations,
     };
 }
 
