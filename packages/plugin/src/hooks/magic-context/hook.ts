@@ -45,6 +45,10 @@ import {
 } from "../../features/magic-context/project-embedding-registry";
 import type { Scheduler } from "../../features/magic-context/scheduler";
 import {
+    createSkillLoadRegistry,
+    type SkillLoadRegistry,
+} from "../../features/magic-context/skill-memory/provenance";
+import {
     getDatabasePersistenceError,
     getSessionsWithPendingMarker,
     isDatabasePersisted,
@@ -84,7 +88,10 @@ import {
     resolveHistorianContextLimit,
     resolveKnownHistorianContextLimit,
 } from "./derive-budgets";
-import { createDroppedInputToolExecuteBeforeHook } from "./dropped-input-guard";
+import {
+    composeToolExecuteBeforeHooks,
+    createDroppedInputToolExecuteBeforeHook,
+} from "./dropped-input-guard";
 import {
     type EmbedHistoryDeps,
     pauseEmbedHistoryDrain,
@@ -123,8 +130,11 @@ import {
     createChatMessageHook,
     createCommandExecuteBeforeHook,
     createEventHook,
+    createIntentByCallIdMap,
     createToolExecuteAfterHook,
+    createToolExecuteBeforeHook,
     getLiveNotificationParams,
+    pruneIntentsForSession,
 } from "./hook-handlers";
 import type { LiveSessionState } from "./live-session-state";
 import {
@@ -438,6 +448,17 @@ export function createMagicContextHook(deps: MagicContextDeps) {
         deps.liveSessionState?.channel1StateBySession ??
         new Map<string, import("./ctx-reduce-nudge").Channel1State>();
     const channel2DirectiveTextBySession = new Map<string, string>();
+    // intentByCallId: stash for skill tool intent captured pre-validation in
+    // tool.execute.before. Bounded: 60s TTL + 256-entry hard cap + finally-delete
+    // in after-hook. Cleared in onSessionDeleted.
+    const intentByCallId = createIntentByCallIdMap();
+    // skillLoadRegistry: session-scoped registry of (skillId → SkillProvenance +
+    // frontmatterConfig), populated in tool.execute.after for the skill tool.
+    // Per-session cleanup in onSessionDeleted (keyed as `${sessionId}:${skillId}`).
+    // Exposed on the hook's return value so the same instance flows to
+    // createCtxSkillNoteTool (index.ts, Task 8) — otherwise the tool sees a
+    // disconnected empty Map and recall is dead on arrival.
+    const skillLoadRegistry: SkillLoadRegistry = createSkillLoadRegistry();
 
     /**
      * Return the live provider/model for a session.
@@ -1178,6 +1199,19 @@ export function createMagicContextHook(deps: MagicContextDeps) {
                 channel1StateBySession.delete(sessionId);
                 channel2DirectiveTextBySession.delete(sessionId);
                 clearEmbedSessionState(sessionId);
+                // intentByCallId is keyed `${sessionID}:${callID}` — prune only THIS
+                // session's entries by prefix so a concurrent session's delete can't
+                // evict another session's in-flight intents (which would silently
+                // degrade its skill-memory recall to the flat rung). The 60s TTL +
+                // 256-entry cap remain the leak backstops.
+                pruneIntentsForSession(intentByCallId, sessionId);
+                // skillLoadRegistry is keyed as `${sessionId}:${skillId}` so we can prune
+                // per-session entries without cross-session bleed. Without this, deleted
+                // sessions' skill loads would persist in the registry for the plugin's
+                // lifetime (potentially days/weeks), slowly leaking memory.
+                for (const key of skillLoadRegistry.keys()) {
+                    if (key.startsWith(`${sessionId}:`)) skillLoadRegistry.delete(key);
+                }
             }
         },
     });
@@ -1472,7 +1506,16 @@ export function createMagicContextHook(deps: MagicContextDeps) {
             }
         },
         "command.execute.before": createCommandExecuteBeforeHook(commandHandler),
-        "tool.execute.before": createDroppedInputToolExecuteBeforeHook(),
+        // Two independent before-hook concerns share one key, so they are composed
+        // rather than registered twice (a duplicate key silently drops one).
+        // Upstream's dropped-input guard runs FIRST because it THROWS when the
+        // model targets a tool call whose input we reclaimed; that rejection must
+        // pre-empt skill-intent capture, which should only observe inputs that
+        // survived the assertion.
+        "tool.execute.before": composeToolExecuteBeforeHooks(
+            createDroppedInputToolExecuteBeforeHook(),
+            createToolExecuteBeforeHook({ intentByCallId }),
+        ),
         "tool.execute.after": createToolExecuteAfterHook({
             db,
             channel1StateBySession,
@@ -1494,7 +1537,19 @@ export function createMagicContextHook(deps: MagicContextDeps) {
                               },
                           })
                     : undefined,
+            skillLoadRegistry,
+            // Resolve session-specific directory from the map populated by the
+            // transform pass; fall back to the hook's own directory (deps.directory)
+            // for the first-turn case where the map isn't seeded yet.
+            sessionDirectoryBySession,
+            defaultDirectory: deps.directory,
+            intentByCallId,
         }),
+        // Exposed so index.ts can pass the SAME instance to createCtxSkillNoteTool.
+        // The after-hook populates this registry; the tool reads from it. Without
+        // this, the tool would receive a fresh empty Map and ctx_skill_note would
+        // always return "No recent skill load found".
+        skillLoadRegistry,
     };
     const hooksWithBackends = hooks as typeof hooks & {
         rustToolBackends?: RustToolBackends;

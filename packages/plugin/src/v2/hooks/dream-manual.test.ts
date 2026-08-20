@@ -108,6 +108,8 @@ test("only the genuine tool-loop tasks are refused", () => {
         "retrospective",
         "maintain-docs",
         "refresh-primers",
+        // Fork skill-memory task; reads the skill-memory pool through tools.
+        "distill-skill-memory",
     ]);
 });
 
