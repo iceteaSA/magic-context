@@ -6,7 +6,7 @@ export const CTX_MEMORY_DESCRIPTION = `Durable facts about this project, shared 
 Your active memories are already in <project-memory> as \`#id: fact\` lines. Write one when you learn something that must not have to be found again — a project rule, an architectural fact, a hard-won constraint, a config value, a naming convention — and especially when it cost you turns to find. One standalone fact per memory, phrased to make sense on its own. A pending intention with its evidence ("do X later, here is what we know") is ctx_note, not memory.
 
 Actions:
-- write: new memory (content + category).
+- write: new memory (content + category). Optional scope: "project" (default) for this project's store, or "global" for cross-project facts (infrastructure, tooling, environment) stored only in the external long-term memory backend.
 - update: rewrite one memory whose fact changed (ids: [one], content; category optional to recategorize).
 - archive: retire wrong or obsolete memories (ids: [one or more], optional reason).
 - merge: collapse duplicates into one (ids: [two or more], content).

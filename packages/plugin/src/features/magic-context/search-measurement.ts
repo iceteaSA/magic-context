@@ -23,6 +23,11 @@ function resultId(result: UnifiedSearchResult): string {
             return `primer:${result.primerId}`;
         case "note":
             return `note:${result.noteId}`;
+        case "external":
+            // External-recall hits are content-based (no stable row id). They are
+            // never part of the primary/shadow embedding comparison corpus, but
+            // the switch must stay exhaustive — key on a content prefix.
+            return `external:${result.content.slice(0, 64)}`;
     }
 }
 
