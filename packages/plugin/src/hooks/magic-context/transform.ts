@@ -19,6 +19,7 @@ import { getProtectionWindowForSession } from "../../features/magic-context/prot
 import type { Scheduler } from "../../features/magic-context/scheduler";
 import { parseCacheTtl } from "../../features/magic-context/scheduler";
 import { recordSessionProjectIdentity } from "../../features/magic-context/session-project-storage";
+
 import {
     type ContextDatabase,
     deriveTagLoadFloor,
@@ -526,6 +527,14 @@ export function scheduleTsAuthorityRecovery(args: {
         });
 }
 
+/**
+ * Extract the text of the session's FIRST meaningful user message — the raw
+ * prompt that opened the conversation. Used to enrich the global external
+ * recall query (recall.global_from_prompt). Skips synthetic/ignored parts and
+ * system directives via hasMeaningfulUserText; strips system-reminder blocks
+ * from the extracted text. Returns undefined when no meaningful user message
+ * exists yet (e.g. command-only turns).
+ */
 export interface TransformDeps {
     hiddenCompletionExecutor?: import("./compartment-runner-types").HiddenCompletionExecutor;
     /** Host marker lifecycle; omission preserves OpenCode 1 marker writes and replay. */
@@ -607,6 +616,10 @@ export interface TransformDeps {
     };
     /** Defaults true. When false, m[0] omits the <project-docs> block and docs hash. */
     injectDocs?: boolean;
+    /** Embedding provider on/off (config `embedding.provider !== "off"`).
+     *  Gates compartment P1 embedding + project registration at the runner
+     *  call sites — independent of the memory store flags. */
+    embeddingEnabled?: boolean;
     ensureProjectRegistered?: (directory: string, db: ContextDatabase) => Promise<void>;
     /**
      * Returns the historian chunk budget. Called at each historian spawn site
@@ -1566,6 +1579,7 @@ export function createTransform(deps: TransformDeps) {
                 // who disable the feature actually see no memories created.
                 memoryEnabled: deps.memoryConfig?.enabled,
                 autoPromote: deps.memoryConfig?.autoPromote,
+                embeddingEnabled: deps.embeddingEnabled,
                 ensureProjectRegistered: deps.ensureProjectRegistered,
                 // Historian publication invalidates the injection cache AND
                 // changes compartments/facts that render into message[0]. We
@@ -1661,6 +1675,7 @@ export function createTransform(deps: TransformDeps) {
                 notificationParams,
             );
         }
+
         // Session-scoped project identity for note-nudge and auto-search, which
         // must target the SESSION's project — not the launch cwd. `deps.projectPath`
         // is resolved once at hook init from the launch directory; on
@@ -2159,6 +2174,7 @@ export function createTransform(deps: TransformDeps) {
             // memory.auto_promote.
             memoryEnabled: deps.memoryConfig?.enabled,
             autoPromote: deps.memoryConfig?.autoPromote,
+            embeddingEnabled: deps.embeddingEnabled,
             ensureProjectRegistered: deps.ensureProjectRegistered,
             // See startRecoveryRun above for the full rationale —
             // historian/recomp publication signals history rebuild +

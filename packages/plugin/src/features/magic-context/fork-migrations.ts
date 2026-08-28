@@ -37,9 +37,9 @@ import {
     FORK_MIGRATION_VERSION_FLOOR,
     isSiblingMigrationConflict,
     isSqliteLockError,
+    MIGRATION_LOCK_RETRY_DELAYS_MS,
     type Migration,
     MigrationLockBusyError,
-    MIGRATION_LOCK_RETRY_DELAYS_MS,
 } from "./migrations";
 import { ensureColumn } from "./storage-schema-helpers";
 
@@ -229,7 +229,7 @@ export const FORK_MIGRATIONS: Migration[] = [
         },
     },
     {
-        // External memory v2: session recall snapshot + m[0] recall marker.
+        // External memory v2 legacy session columns.
         //
         // Renumbered nine times chasing the upstream lane
         // (v31→33→37→38→39→42→50→73→75): every release that claimed the next
@@ -241,7 +241,7 @@ export const FORK_MIGRATIONS: Migration[] = [
         // The body is ensureColumn-idempotent, so a dev DB that already ran this
         // under any earlier number re-applies harmlessly.
         version: 10_100,
-        description: "External memory v2: session recall snapshot + m[0] recall marker",
+        description: "External memory v2 legacy session columns",
         up: (db: Database) => {
             // session_meta existence guard — see v30's comment (partial test fixtures).
             const hasSessionMeta = db
@@ -250,15 +250,11 @@ export const FORK_MIGRATIONS: Migration[] = [
                 )
                 .get();
             if (!hasSessionMeta) return;
-            // Per-session external recall snapshot (post-dedup, post-trim) — the
-            // frozen content every render replays for byte stability.
+            // Keep historical columns so existing databases remain migratable;
+            // the current external path is write + explicit ctx_search only.
             ensureColumn(db, "session_meta", "external_recall_json", "TEXT");
             ensureColumn(db, "session_meta", "external_recall_state", "TEXT");
             ensureColumn(db, "session_meta", "external_recall_at", "INTEGER");
-            // m[0] marker: hash of the external content baked into the cached m[0]
-            // ('' = none). NOT a mustMaterialize trigger — drives only the m[1]
-            // <external-memory> delta comparison. No cache-clear needed: the
-            // cachedRowMatchesState comparison normalizes NULL and '' to equal.
             ensureColumn(db, "session_meta", "cached_m0_external_recall_hash", "TEXT");
         },
     },

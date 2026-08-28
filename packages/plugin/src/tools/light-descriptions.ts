@@ -6,7 +6,7 @@ export const CTX_NOTE_LIGHT_DESCRIPTION = `For ctx_note: write saves, read lists
 
 export const CTX_MEMORY_LIGHT_DESCRIPTION = `For ctx_memory users, write one standalone durable fact with category and content; update one ID, archive one or more IDs, merge two or more IDs, or get one to twenty numeric IDs. get reads memories in every status; list remains dreamer-only, so primary agents must NEVER assume bulk-list access.`;
 
-export const CTX_SEARCH_LIGHT_DESCRIPTION = `For ctx_search users, retrieve only hidden recall: memories not in <project-memory>, compacted messages outside the live tail, commits, and notes; phrase query as a question carrying exact terms. Omit sources for broad search; select memory, message, git_commit, or note, or pass memory IDs directly. Hits expand through ctx_expand.`;
+export const CTX_SEARCH_LIGHT_DESCRIPTION = `For ctx_search users, retrieve only hidden recall: memories not in <project-memory>, compacted messages outside the live tail, commits, notes, and explicitly requested external knowledge; phrase query as a question carrying exact terms. Omit sources for broad search; select memory, message, git_commit, note, or external, or pass memory IDs directly. Hits expand through ctx_expand.`;
 
 export const CTX_SKILL_NOTE_LIGHT_DESCRIPTION = `For ctx_skill_note users, record one skill-scoped lesson after a skill load: skill, intent, kind (gotcha, discovery, fix, or workflow), and delta. Notes resurface automatically on the next load of that skill. Record only a deviation — a trap, a better approach, or an error and its fix; NEVER record a routine success, and NEVER record a general project fact because those belong in ctx_memory.`;
 
