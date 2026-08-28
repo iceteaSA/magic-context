@@ -840,6 +840,89 @@ export interface MuralConfig {
     model?: string;
 }
 
+export const EXTERNAL_MEMORY_RETAIN_SOURCES = ["historian", "agent", "dreamer"] as const;
+export type ExternalMemoryRetainSource = (typeof EXTERNAL_MEMORY_RETAIN_SOURCES)[number];
+
+export const ExternalSearchConfigSchema = z
+    .boolean()
+    .default(true)
+    .describe("Expose the ctx_search 'external' source (project + main bank). (default: true)");
+
+const BaseExternalMemoryConfigSchema = z
+    .object({
+        provider: z
+            .enum(["hindsight", "off"])
+            .default("off")
+            .describe(
+                "External memory backend. 'hindsight' tees memory creations to a Hindsight service; 'off' disables (default). SECURITY: this whole block only honors USER-level config.",
+            ),
+        endpoint: z
+            .string()
+            .optional()
+            .describe(
+                "Backend base URL (e.g. http://10.0.0.1:8889). Required when provider is hindsight.",
+            ),
+        api_key: z.string().optional().describe("Bearer token for the backend (optional)."),
+        project_bank: z
+            .string()
+            .default("mc-{name}-{id8}")
+            .describe(
+                "Bank name template for project-scoped items. Placeholders: {name}=project basename, {id8}=first 8 chars of the project identity hash.",
+            ),
+        main_bank: z
+            .string()
+            .optional()
+            .describe(
+                "Bank for user- and global-scoped items. Required when provider is hindsight. Assumed to pre-exist; never created or modified.",
+            ),
+        retain_sources: z
+            .array(z.enum(EXTERNAL_MEMORY_RETAIN_SOURCES))
+            .default([...EXTERNAL_MEMORY_RETAIN_SOURCES])
+            .describe(
+                "Which creation points tee: historian promotion, agent ctx_memory writes, dreamer user-memory promotion.",
+            ),
+        tags: z
+            .array(z.string())
+            .default([])
+            .describe("Static tags attached to every retained item."),
+        search: ExternalSearchConfigSchema,
+    })
+    .superRefine((data, ctx) => {
+        if (data.provider === "hindsight" && !data.endpoint?.trim()) {
+            ctx.addIssue({
+                code: "custom",
+                path: ["endpoint"],
+                message: "endpoint is required when memory.external.provider is hindsight",
+            });
+        }
+        if (data.provider === "hindsight" && !data.main_bank?.trim()) {
+            ctx.addIssue({
+                code: "custom",
+                path: ["main_bank"],
+                message: "main_bank is required when memory.external.provider is hindsight",
+            });
+        }
+    });
+
+export const ExternalMemoryConfigSchema = BaseExternalMemoryConfigSchema.transform((data) => {
+    if (data.provider === "off") {
+        return { provider: "off" as const };
+    }
+    const apiKey = data.api_key?.trim();
+    return {
+        provider: "hindsight" as const,
+        endpoint: (data.endpoint?.trim() ?? "").replace(/\/+$/, ""),
+        ...(apiKey ? { api_key: apiKey } : {}),
+        project_bank: data.project_bank.trim() || "mc-{name}-{id8}",
+        main_bank: data.main_bank?.trim() ?? "",
+        retain_sources: data.retain_sources,
+        tags: data.tags,
+        search: data.search,
+    };
+});
+
+export type ExternalMemoryConfig = z.infer<typeof ExternalMemoryConfigSchema>;
+
 export interface MagicContextConfig {
     enabled: boolean;
     /** User-level setting that lets a session started exactly in the canonical home directory use a deterministic directory identity. */
@@ -1015,6 +1098,7 @@ export interface MagicContextConfig {
             /** Max commits kept per project; oldest evicted (default: 2000) */
             max_commits: number;
         };
+        external: ExternalMemoryConfig;
     };
     sidekick?: SidekickConfig;
 }
@@ -1454,6 +1538,9 @@ export const MagicContextConfigSchema = z
                     .describe(
                         "Index git commit messages from HEAD into ctx_search. Commits become a 4th searchable source alongside memories and session history. Graduated from experimental.git_commit_indexing; opt-in, default off (per-project embedding cost). Independent of memory.enabled.",
                     ),
+                external: ExternalMemoryConfigSchema.default({ provider: "off" }).describe(
+                    "External long-term memory backend (tee). USER config only.",
+                ),
             })
             .default({
                 enabled: true,
@@ -1462,6 +1549,7 @@ export const MagicContextConfigSchema = z
                 retrieval_count_promotion_threshold: 3,
                 auto_search: { enabled: true, score_threshold: 0.6, min_prompt_chars: 20 },
                 git_commit_indexing: { enabled: false, since_days: 365, max_commits: 2000 },
+                external: { provider: "off" },
             })
             .describe("Cross-session memory configuration"),
         sidekick: SidekickConfigSchema.describe(

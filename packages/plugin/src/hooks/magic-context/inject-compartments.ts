@@ -2072,6 +2072,7 @@ export function renderM0(args: {
             args.userProfileBaseline,
             args.userProfileBudgetTokens ?? DEFAULT_USER_PROFILE_BUDGET_TOKENS,
         ),
+        "user-profile",
     );
     if (userProfile) sections.push(userProfile);
 
@@ -2599,6 +2600,12 @@ interface RenderM1Result {
     text: string;
     memoryUpdateCount: number;
     renderedMemoryIds: number[];
+    /** True when this result was freshly rendered from current DB state. False
+     *  when the bytes are a persisted-row replay (sibling-adoption fallback
+     *  or defer-pass replay). The pressure-refold backstop must only fire on
+     *  recomputed bytes — a replayed sibling m[1] that happens to contain a
+     *  large external delta is already settled and must not cause a fold. */
+    recomputed: boolean;
 }
 
 function renderM1WithMetadata(
@@ -2724,12 +2731,14 @@ function renderM1WithMetadata(
             text: M1_EMPTY_PLACEHOLDER,
             memoryUpdateCount: memoryUpdates.count,
             renderedMemoryIds: renderedNewMemoryIds,
+            recomputed: true,
         };
     }
     return {
         text: `<session-history-since>\n${blocks.join("\n")}\n</session-history-since>`,
         memoryUpdateCount: memoryUpdates.count,
         renderedMemoryIds: renderedNewMemoryIds,
+        recomputed: true,
     };
 }
 
@@ -2813,7 +2822,7 @@ function readCachedM0M1Row(db: Database, sessionId: string): CachedM0M1Row | nul
                      cached_m0_system_hash,
                      cached_m0_tool_set_hash,
                      cached_m0_model_key,
-                    cached_m0_project_identity,
+                     cached_m0_project_identity,
                     memory_block_ids
                FROM session_meta
               WHERE session_id = ?`,
@@ -2937,10 +2946,12 @@ function softRefreshCachedM1(options: M0M1RenderOptions): RenderM1Result {
             const sibling = readCachedM0M1Row(options.db, options.sessionId);
             if (!sibling) throw new RenderM1InvalidMarkersError(options.sessionId);
             applyCachedRowToState(options.state, sibling);
+            // Replayed sibling bytes must not drive the pressure-refold math.
             return {
                 text: replayCachedM1(options.state),
                 memoryUpdateCount: 0,
                 renderedMemoryIds: [],
+                recomputed: false,
             };
         }
 
@@ -3235,6 +3246,7 @@ export function injectM0M1(options: M0M1RenderOptions): InjectM0M1Result {
                 text: materialized.m1Text,
                 memoryUpdateCount: 0,
                 renderedMemoryIds: [],
+                recomputed: true,
             };
             rematerialized = true;
         } catch (error) {
@@ -3307,7 +3319,13 @@ export function injectM0M1(options: M0M1RenderOptions): InjectM0M1Result {
         const refreshed = softRefreshCachedM1(options);
         m1Text = refreshed.text;
         memoryUpdateCount = refreshed.memoryUpdateCount;
-        m1Recomputed = true;
+        // Sibling-adoption fallback returns recomputed=false (replayed bytes
+        // must not drive the pressure backstop). The normal soft-refresh path
+        // returns recomputed=true (genuinely re-rendered). Replaying defer
+        // passes' persisted bytes is the same category as the sibling fallback:
+        // the pressure math is a no-op when m1Recomputed is false, and
+        // "replayed bytes must not live-read/refold" still holds.
+        m1Recomputed = refreshed.recomputed;
         m0Text = decodeM0Bytes(options.state.cachedM0Bytes) ?? M0_EMPTY_BODY;
     } else {
         m1Text = replayCachedM1(options.state);
@@ -3340,10 +3358,13 @@ export function injectM0M1(options: M0M1RenderOptions): InjectM0M1Result {
     // ~15% of m[0] tokens". XML-heavy / non-Latin content makes char length
     // diverge sharply from token count, so the ratio must compare tokens on both
     // sides. Computed once; this branch is rare (cache-busting + m1Recomputed).
+    //
     const m1HasContent = m1Text !== M1_EMPTY_PLACEHOLDER;
     const m1Tokens = m1HasContent ? estimateTokens(m1Text) : 0;
+    const m1PressureTokens = m1Tokens;
+    const m1AbsoluteContentBudget = m1AbsoluteBudget;
     const m0Tokens = estimateTokens(m0Text);
-    const m1OverAbsoluteCap = m1HasContent && m1Tokens > m1AbsoluteBudget;
+    const m1OverAbsoluteCap = m1HasContent && m1PressureTokens > m1AbsoluteContentBudget;
     if (
         !rematerialized &&
         !contentionExhausted &&
@@ -3353,7 +3374,7 @@ export function injectM0M1(options: M0M1RenderOptions): InjectM0M1Result {
             m1OverAbsoluteCap ||
             (m1HasContent &&
                 m0Tokens >= M0_DRIFT_RATIO_FLOOR_TOKENS &&
-                m1Tokens > m0Tokens * M1_DRIFT_RATIO))
+                m1PressureTokens > m0Tokens * M1_DRIFT_RATIO))
     ) {
         try {
             const refolded = materializeWithRetry(options);

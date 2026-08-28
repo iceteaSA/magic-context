@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 /**
  * Pi-side wrapper for the `ctx_search` tool.
  *
@@ -60,10 +61,11 @@ const ParamsSchema = Type.Object(
 					Type.Literal("git_commit"),
 					Type.Literal("primer"),
 					Type.Literal("note"),
+					Type.Literal("external"),
 				]),
 				{
 					description:
-						'Optional. Restrict to specific sources. Examples: ["primer"] for standing project explanations, ["git_commit"] for "when did we change X", ["memory"] for naming conventions, ["message"] for "did we discuss this earlier", ["note"] for parked decisions or follow-ups, ["git_commit","message"] for regression hunts. Omit for a broad search across all enabled sources.',
+						'Optional. Restrict to specific sources. Examples: ["primer"] for standing project explanations, ["git_commit"] for "when did we change X", ["memory"] for naming conventions, ["message"] for "did we discuss this earlier", ["note"] for parked decisions or follow-ups, ["git_commit","message"] for regression hunts, ["external"] for long-term knowledge from past sessions. Omit for a broad search across all enabled sources.',
 				},
 			),
 		),
@@ -116,7 +118,14 @@ export function createCtxSearchTool(
 					type: "array",
 					items: "string",
 					maxItems: 5,
-					values: ["memory", "message", "git_commit", "primer", "note"],
+					values: [
+						"memory",
+						"message",
+						"git_commit",
+						"primer",
+						"note",
+						"external",
+					],
 				},
 			});
 			const query = params.query?.trim();
@@ -236,6 +245,9 @@ export function createCtxSearchTool(
 					// (parity with OpenCode's ctx_search). Pi auto-search leaves
 					// this off to protect its latency budget.
 					explicitSearch: true,
+					// External bank resolution: basename is the human-readable label;
+					// project identity is the key.
+					projectName: ctx.cwd ? basename(ctx.cwd) : undefined,
 				},
 			);
 

@@ -2376,6 +2376,7 @@ export function registerPiContextHandler(
 			const isFirstContextPassForSession =
 				!firstContextPassSeenBySession.has(sessionId);
 			firstContextPassSeenBySession.add(sessionId);
+
 			const piUsage = ctx.getContextUsage?.();
 			const tModelDetect = performance.now();
 			// Seed the in-memory model key from the JSONL on the first pass after a
@@ -5759,6 +5760,7 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 	if (args.injection) {
 		try {
 			const tInjection = performance.now();
+			if (!piM0State) throw new Error("Pi m[0]/m[1] state unavailable");
 			// NOTE: do NOT clear the m[0]/m[1] cache on a cache-busting pass. A new
 			// compartment is an m[1] DELTA (SOFT), not an m[0] re-materialization
 			// (HARD) — clearing forced mustMaterializePi to first_render and folded
@@ -5768,7 +5770,7 @@ async function runPipeline(args: RunPipelineArgs): Promise<RunPipelineResult> {
 			// HARD triggers (model/system/ttl/epoch/upgrade/mutation) still
 			// re-materialize inside mustMaterializePi when genuinely needed.
 			const wireInjectionResult = injectM0M1PiForRun(
-				piM0State!,
+				piM0State,
 				args.db,
 				args.messages as Parameters<typeof injectM0M1Pi>[2],
 				args.entryIds,

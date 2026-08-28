@@ -141,6 +141,15 @@ describe("MagicContextConfigSchema", () => {
                         since_days: 365,
                         max_commits: 2000,
                     },
+                    external: {
+                        provider: "hindsight",
+                        endpoint: "http://localhost:9999",
+                        main_bank: "test-main",
+                        project_bank: "mc-{name}-{id8}",
+                        retain_sources: ["historian", "agent", "dreamer"],
+                        tags: [],
+                        search: true,
+                    },
                 },
                 pi: {
                     subagent_extensions: ["@example/provider", "./extensions/local.ts"],
@@ -770,6 +779,43 @@ describe("MagicContextConfigSchema", () => {
                     embedding: { provider: "local", local_dtype: "fp64" },
                 }),
             ).toThrow();
+        });
+    });
+
+    describe("memory.external", () => {
+        it("defaults to provider off when absent", () => {
+            const config = MagicContextConfigSchema.parse({});
+            expect(config.memory.external).toEqual({ provider: "off" });
+        });
+
+        it("hindsight provider requires endpoint and main_bank", () => {
+            const result = MagicContextConfigSchema.safeParse({
+                memory: { external: { provider: "hindsight" } },
+            });
+            expect(result.success).toBe(false);
+            if (result.success) throw new Error("expected parse to fail");
+            const joinedPaths = result.error.issues.map((i) => i.path.join("."));
+            expect(joinedPaths.some((p) => p.endsWith("endpoint"))).toBe(true);
+            expect(joinedPaths.some((p) => p.endsWith("main_bank"))).toBe(true);
+        });
+
+        it("valid hindsight config parses with defaults", () => {
+            const config = MagicContextConfigSchema.parse({
+                memory: {
+                    external: {
+                        provider: "hindsight",
+                        endpoint: "http://10.0.0.1:8889/",
+                        main_bank: "main-memory",
+                    },
+                },
+            });
+            const external = config.memory.external;
+            if (external.provider !== "hindsight") throw new Error("expected hindsight");
+            expect(external.endpoint).toBe("http://10.0.0.1:8889");
+            expect(external.project_bank).toBe("mc-{name}-{id8}");
+            expect(external.retain_sources).toEqual(["historian", "agent", "dreamer"]);
+            expect(external.tags).toEqual([]);
+            expect(external.main_bank).toBe("main-memory");
         });
     });
 });

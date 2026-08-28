@@ -2,6 +2,8 @@ import { sessionLog } from "../../../shared/logger";
 import type { Database } from "../../../shared/sqlite";
 import { CATEGORY_DEFAULT_TTL, PROMOTABLE_CATEGORIES } from "./constants";
 import { embedTextForProject } from "./embedding";
+import { teeToExternalBackend } from "./external-memory";
+import type { ExternalMemoryRetainItem } from "./external-memory-provider";
 import { computeNormalizedHash } from "./normalize-hash";
 import {
     getMemoryByHash,
@@ -20,6 +22,7 @@ interface SessionFact {
 export interface PromotedMemoryRef {
     memoryId: number;
     content: string;
+    category: MemoryCategory;
 }
 
 function isPromotableCategory(category: string): category is MemoryCategory {
@@ -77,24 +80,43 @@ export function promoteSessionFactsDurable(
         };
 
         const memory = insertMemory(db, memoryInput);
-        refs.push({ memoryId: memory.id, content: memory.content });
+        refs.push({ memoryId: memory.id, content: memory.content, category: fact.category });
     }
 
     return refs;
 }
 
 /**
- * Best-effort asynchronous embedding for newly promoted facts. Must run after
- * the durable publish transaction commits.
+ * Best-effort asynchronous post-commit side effects for newly promoted facts:
+ * (1) embed each into the project vector store, and (2) fire-and-forget tee the
+ * batch to the external memory backend. Must run AFTER the durable publish
+ * transaction commits so only durably-persisted facts are embedded and teed.
  */
 export async function embedPromotedFacts(
     db: Database,
     sessionId: string,
     projectPath: string,
     refs: PromotedMemoryRef[],
+    options?: { projectName?: string },
 ): Promise<void> {
     for (const ref of refs) {
         await embedAndStoreMemory(db, sessionId, projectPath, ref.memoryId, ref.content);
+    }
+
+    // Fire-and-forget batched external tee — never blocks or fails promotion.
+    // Lives in the post-commit phase so only durably-persisted facts are teed
+    // (mirrors the embedding gating above).
+    if (refs.length > 0) {
+        const teedItems: ExternalMemoryRetainItem[] = refs.map((ref) => ({
+            content: ref.content,
+            category: ref.category,
+            scope: "project",
+            projectIdentity: projectPath,
+            ...(options?.projectName ? { projectName: options.projectName } : {}),
+            sourceType: "historian",
+            sessionId,
+        }));
+        void teeToExternalBackend("historian", teedItems);
     }
 }
 

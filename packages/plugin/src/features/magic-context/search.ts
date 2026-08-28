@@ -20,6 +20,8 @@ import {
 } from "./memory";
 import { cosineSimilarity } from "./memory/cosine-similarity";
 import { embedText, getProjectEmbeddingSnapshot, isEmbeddingEnabled } from "./memory/embedding";
+import { isExternalSearchEnabled, recallFromExternalBackend } from "./memory/external-memory";
+import { computeNormalizedHash } from "./memory/normalize-hash";
 import { sanitizeFtsQuery } from "./memory/storage-memory-fts";
 import { getIndexedMessageCorpusSize } from "./message-index";
 import { recordShadowMeasurement } from "./search-measurement";
@@ -79,7 +81,7 @@ const messageSearchDiagnosticStatements = new WeakMap<Database, PreparedStatemen
 const batchedMessageSearchStatements = new WeakMap<Database, Map<string, PreparedStatement>>();
 const batchedFtsCountStatements = new WeakMap<Database, Map<string, PreparedStatement>>();
 
-export type SearchSource = "memory" | "message" | "git_commit" | "primer" | "note";
+export type SearchSource = "memory" | "message" | "git_commit" | "primer" | "note" | "external";
 
 export interface CapturedQueryEmbedding {
     vector: Float32Array;
@@ -160,6 +162,10 @@ export interface UnifiedSearchOptions {
     measurementDisabled?: boolean;
     embeddingModelIdOverride?: string;
     chunkModelIdOverride?: string;
+    /** Override for tests; defaults to module-level isExternalSearchEnabled(). */
+    externalSearchEnabled?: boolean;
+    /** Project name (basename) for external bank resolution. */
+    projectName?: string;
 }
 
 export interface MemorySearchResult {
@@ -227,13 +233,21 @@ export interface NoteSearchResult {
     sourceSessionId: string | null;
 }
 
+export interface ExternalSearchResult {
+    source: "external";
+    content: string;
+    score: number;
+    category?: string;
+}
+
 export type UnifiedSearchResult =
     | MemorySearchResult
     | MessageSearchResult
     | CompartmentSearchResult
     | GitCommitSearchResult
     | PrimerSearchResult
-    | NoteSearchResult;
+    | NoteSearchResult
+    | ExternalSearchResult;
 
 function normalizeLimit(limit?: number): number {
     if (typeof limit !== "number" || !Number.isFinite(limit)) {
@@ -1486,6 +1500,12 @@ function getSourceBoost(result: UnifiedSearchResult): number {
             return PRIMER_SOURCE_BOOST;
         case "note":
             return 1;
+        case "external":
+            // Below curated memories (1.3) — local rows outrank external
+            // matches when the two are even close, which is the safe default
+            // (a verified local fact is more authoritative than an external
+            // recall of an older, possibly stale statement).
+            return 1.0;
     }
 }
 
@@ -1520,6 +1540,9 @@ function compareUnifiedResults(left: UnifiedSearchResult, right: UnifiedSearchRe
 
     if (left.source === "note" && right.source === "note") {
         return right.createdAt - left.createdAt || left.noteId - right.noteId;
+    }
+    if (left.source === "external" && right.source === "external") {
+        return left.content.localeCompare(right.content);
     }
 
     return 0;
@@ -1624,11 +1647,78 @@ function searchPrimers(args: {
     return scored;
 }
 
+const EXTERNAL_SEARCH_TIMEOUT_MS = 5_000;
+
+async function searchExternal(args: {
+    db: Database;
+    sessionId: string;
+    projectPath: string;
+    projectName?: string;
+    query: string;
+    limit: number;
+    signal?: AbortSignal;
+}): Promise<ExternalSearchResult[]> {
+    // Tighter bound than the backend's 10s fetch timeout: an explicit tool
+    // call shouldn't hang on a slow Hindsight.
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), EXTERNAL_SEARCH_TIMEOUT_MS);
+    const onOuterAbort = () => controller.abort();
+    args.signal?.addEventListener("abort", onOuterAbort, { once: true });
+    try {
+        const [project, global] = await Promise.all([
+            recallFromExternalBackend(
+                {
+                    query: args.query,
+                    scope: "project",
+                    projectIdentity: args.projectPath,
+                    ...(args.projectName ? { projectName: args.projectName } : {}),
+                    limit: args.limit,
+                },
+                controller.signal,
+            ),
+            recallFromExternalBackend(
+                { query: args.query, scope: "global", limit: args.limit },
+                controller.signal,
+            ),
+        ]);
+
+        // Drop cross-bank duplicates; external recall is on-demand and is no
+        // longer injected into the session prompt.
+        const seen = new Set<string>();
+        const merged: Array<{ content: string; category?: string }> = [];
+        for (const hit of [...project, ...global]) {
+            const hash = computeNormalizedHash(hit.content);
+            if (seen.has(hash)) continue;
+            seen.add(hash);
+            merged.push(hit);
+        }
+
+        // Rank-based scoring (Hindsight result order is its relevance order).
+        const top = merged.slice(0, args.limit);
+        return top.map(
+            (hit, rank) =>
+                ({
+                    source: "external" as const,
+                    content: previewText(hit.content),
+                    score: linearDecayScore(rank, top.length),
+                    ...(hit.category ? { category: hit.category } : {}),
+                }) satisfies ExternalSearchResult,
+        );
+    } finally {
+        clearTimeout(timeout);
+        args.signal?.removeEventListener("abort", onOuterAbort);
+    }
+}
+
 function resolveSources(sources: SearchSource[] | undefined): Set<SearchSource> {
     if (sources === undefined) {
-        // Default: search all recall sources. Facts are deliberately NOT a
-        // source — they're always rendered in <session-history> so searching
-        // them returns content the agent already sees.
+        // Default: search all local recall sources (memory, message, git_commit,
+        // primer, note). Facts are deliberately NOT a source — they're always
+        // rendered in <session-history> so searching them returns content the
+        // agent already sees. External is opt-in via the `sources` arg; the
+        // runExternal gate downstream also requires explicitSearch=true so the
+        // auto-search hot path never fires an external roundtrip even if a caller
+        // lists "external" in the array.
         return new Set<SearchSource>(["memory", "message", "git_commit", "primer", "note"]);
     }
     const set = new Set<SearchSource>();
@@ -1638,7 +1728,8 @@ function resolveSources(sources: SearchSource[] | undefined): Set<SearchSource> 
             source === "message" ||
             source === "git_commit" ||
             source === "primer" ||
-            source === "note"
+            source === "note" ||
+            source === "external"
         ) {
             set.add(source);
         }
@@ -1776,6 +1867,17 @@ export async function unifiedSearch(
     const runNotes = activeSources.has("note");
     const runCompartmentChunks = runMessages && memoryFeatureEnabled && embeddingEnabled;
 
+    // External recall is opt-in AND explicit-only: the auto-search hot path
+    // (every user prompt hint) MUST NOT fire an external roundtrip. The
+    // `options.sources === undefined` clause means callers who pass no
+    // `sources` arg still get external on explicit searches; the auto-search
+    // caller never sets `explicitSearch`, so the gate short-circuits there.
+    const externalEnabled = options.externalSearchEnabled ?? isExternalSearchEnabled();
+    const runExternal =
+        externalEnabled &&
+        options.explicitSearch === true &&
+        (options.sources === undefined || activeSources.has("external"));
+
     // Embed the query ONCE at the top — both memory and git-commit searches
     // need the same vector. Previously each search called `embedQuery`
     // independently, producing two parallel HTTP requests for the same
@@ -1870,63 +1972,79 @@ export async function unifiedSearch(
         limit: tierLimit,
     });
 
-    const [memoryOutcome, gitCommitResults, primerResults, noteResults] = await Promise.all([
-        runMemory
-            ? searchMemories({
-                  db,
-                  projectPath,
-                  query: trimmedQuery,
-                  limit: tierLimit,
-                  memoryEnabled: true,
-                  queryEmbedding,
-                  queryModelId:
-                      embeddingModelId && embeddingModelId !== "off" ? embeddingModelId : null,
-                  workspace,
-                  visibleMemoryIds: options.visibleMemoryIds,
-              })
-            : Promise.resolve({
-                  results: [] as MemorySearchResult[],
-                  suppressedVisibleIds: [] as number[],
-              }),
-        runGitCommits
-            ? Promise.resolve(
-                  searchGitCommits({
+    const [memoryOutcome, gitCommitResults, primerResults, noteResults, externalResults] =
+        await Promise.all([
+            runMemory
+                ? searchMemories({
                       db,
                       projectPath,
                       query: trimmedQuery,
                       limit: tierLimit,
+                      memoryEnabled: true,
                       queryEmbedding,
                       queryModelId:
                           embeddingModelId && embeddingModelId !== "off" ? embeddingModelId : null,
+                      workspace,
+                      visibleMemoryIds: options.visibleMemoryIds,
+                  })
+                : Promise.resolve({
+                      results: [] as MemorySearchResult[],
+                      suppressedVisibleIds: [] as number[],
                   }),
-              )
-            : Promise.resolve([] as GitCommitSearchResult[]),
-        runPrimers
-            ? Promise.resolve(
-                  searchPrimers({
-                      db,
-                      projectPath,
-                      query: trimmedQuery,
-                      limit: tierLimit,
-                      queryEmbedding,
-                      queryModelId:
-                          embeddingModelId && embeddingModelId !== "off" ? embeddingModelId : null,
-                  }),
-              )
-            : Promise.resolve([] as PrimerSearchResult[]),
-        runNotes
-            ? Promise.resolve(
-                  searchNotes({
+            runGitCommits
+                ? Promise.resolve(
+                      searchGitCommits({
+                          db,
+                          projectPath,
+                          query: trimmedQuery,
+                          limit: tierLimit,
+                          queryEmbedding,
+                          queryModelId:
+                              embeddingModelId && embeddingModelId !== "off"
+                                  ? embeddingModelId
+                                  : null,
+                      }),
+                  )
+                : Promise.resolve([] as GitCommitSearchResult[]),
+            runPrimers
+                ? Promise.resolve(
+                      searchPrimers({
+                          db,
+                          projectPath,
+                          query: trimmedQuery,
+                          limit: tierLimit,
+                          queryEmbedding,
+                          queryModelId:
+                              embeddingModelId && embeddingModelId !== "off"
+                                  ? embeddingModelId
+                                  : null,
+                      }),
+                  )
+                : Promise.resolve([] as PrimerSearchResult[]),
+            runNotes
+                ? Promise.resolve(
+                      searchNotes({
+                          db,
+                          sessionId,
+                          projectPath,
+                          query: trimmedQuery,
+                          limit: tierLimit,
+                          probes: messageProbes,
+                      }),
+                  )
+                : Promise.resolve([] as NoteSearchResult[]),
+            runExternal
+                ? searchExternal({
                       db,
                       sessionId,
                       projectPath,
+                      projectName: options.projectName,
                       query: trimmedQuery,
                       limit: tierLimit,
-                      probes: messageProbes,
-                  }),
-              )
-            : Promise.resolve([] as NoteSearchResult[]),
-    ]);
+                      signal: options.signal,
+                  })
+                : Promise.resolve([] as ExternalSearchResult[]),
+        ]);
 
     if (options.diagnostics) {
         options.diagnostics.suppressedVisibleMemoryIds = memoryOutcome.suppressedVisibleIds;
@@ -1937,6 +2055,7 @@ export async function unifiedSearch(
         ...messageLikeResults,
         ...gitCommitResults,
         ...noteResults,
+        ...externalResults,
     ]
         .sort(compareUnifiedResults)
         .slice(0, limit);
@@ -2041,6 +2160,13 @@ function formatUnifiedSearchResult(
             result.snippet ? `Snippet: ${result.snippet}` : result.content,
         ].join("\n");
     }
+    if (result.source === "external") {
+        const categoryPart = result.category ? ` category=${result.category}` : "";
+        return [
+            `[${index}] [external] score=${result.score.toFixed(2)}${categoryPart}`,
+            result.content,
+        ].join("\n");
+    }
     const expandStart = Math.max(1, result.messageOrdinal - 3);
     const expandEnd = result.messageOrdinal + 3;
     return [
@@ -2098,7 +2224,7 @@ export function formatSearchResults(
         if (diagnosticLines.length > 0) {
             return `No hidden results found for "${query}".\n\n${diagnosticLines.join("\n")}`;
         }
-        return `No results found for "${query}" across notes, memories, primers, git commits, or message history.`;
+        return `No results found for "${query}" across notes, memories, primers, git commits, message history, or external knowledge.`;
     }
 
     const bodyParts = results.map((result, index) =>

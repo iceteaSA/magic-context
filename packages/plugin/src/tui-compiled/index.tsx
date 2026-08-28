@@ -915,6 +915,47 @@ const StatusDialog = props => {
             }
           });
         })(), null);
+        _$insert(_el$69, (() => {
+          var _c$16 = _$memo(() => !!s().skillMemory);
+          return () => _c$16() && (() => {
+            const sm = s().skillMemory;
+            return (() => {
+              var _el$81 = _$createElement("box"),
+                _el$82 = _$createElement("box"),
+                _el$83 = _$createElement("text"),
+                _el$84 = _$createElement("b");
+              _$insertNode(_el$81, _el$82);
+              _$setProp(_el$81, "flexDirection", "column");
+              _$insertNode(_el$82, _el$83);
+              _$setProp(_el$82, "marginTop", 1);
+              _$insertNode(_el$83, _el$84);
+              _$insertNode(_el$84, _$createTextNode(`Skill Memory`));
+              _$insert(_el$81, _$createComponent(R, {
+                get t() {
+                  return t();
+                },
+                l: "Notes",
+                get v() {
+                  return `${sm.totalNotes} (${sm.skillsWithNotes} ${sm.skillsWithNotes === 1 ? "skill" : "skills"})`;
+                }
+              }), null);
+              _$insert(_el$81, _$createComponent(R, {
+                get t() {
+                  return t();
+                },
+                l: "Pinned",
+                get v() {
+                  return String(sm.pinnedNotes);
+                },
+                get fg() {
+                  return t().textMuted;
+                }
+              }), null);
+              _$effect(_$p => _$setProp(_el$83, "fg", t().text, _$p));
+              return _el$81;
+            })();
+          })();
+        })(), null);
         _$effect(_p$ => {
           var _v$19 = t().text,
             _v$20 = t().text,
@@ -934,16 +975,16 @@ const StatusDialog = props => {
     _$insert(_el$4, (() => {
       var _c$8 = _$memo(() => !!s().lastTransformError);
       return () => _c$8() && (() => {
-        var _el$81 = _$createElement("box"),
-          _el$82 = _$createElement("text"),
-          _el$83 = _$createTextNode(`⚠ `);
-        _$insertNode(_el$81, _el$82);
-        _$setProp(_el$81, "marginTop", 1);
-        _$setProp(_el$81, "width", "100%");
-        _$insertNode(_el$82, _el$83);
-        _$insert(_el$82, () => s().lastTransformError, null);
-        _$effect(_$p => _$setProp(_el$82, "fg", t().error, _$p));
-        return _el$81;
+        var _el$86 = _$createElement("box"),
+          _el$87 = _$createElement("text"),
+          _el$88 = _$createTextNode(`⚠ `);
+        _$insertNode(_el$86, _el$87);
+        _$setProp(_el$86, "marginTop", 1);
+        _$setProp(_el$86, "width", "100%");
+        _$insertNode(_el$87, _el$88);
+        _$insert(_el$87, () => s().lastTransformError, null);
+        _$effect(_$p => _$setProp(_el$87, "fg", t().error, _$p));
+        return _el$86;
       })();
     })(), _el$18);
     _$insertNode(_el$18, _el$19);
@@ -1177,31 +1218,31 @@ const EmbedDialog = props => {
   const t = () => theme();
   const lines = () => props.detail.statusText.split("\n");
   return (() => {
-    var _el$84 = _$createElement("box"),
-      _el$85 = _$createElement("box"),
-      _el$86 = _$createElement("text"),
-      _el$87 = _$createElement("b");
-    _$insertNode(_el$84, _el$85);
-    _$setProp(_el$84, "flexDirection", "column");
-    _$setProp(_el$84, "width", "100%");
-    _$setProp(_el$84, "paddingLeft", 2);
-    _$setProp(_el$84, "paddingRight", 2);
-    _$setProp(_el$84, "paddingTop", 1);
-    _$setProp(_el$84, "paddingBottom", 1);
-    _$insertNode(_el$85, _el$86);
-    _$setProp(_el$85, "justifyContent", "center");
-    _$setProp(_el$85, "width", "100%");
-    _$setProp(_el$85, "marginBottom", 1);
-    _$insertNode(_el$86, _el$87);
-    _$insertNode(_el$87, _$createTextNode(`Embedding`));
-    _$insert(_el$84, () => lines().map(line => (() => {
-      var _el$89 = _$createElement("text");
-      _$insert(_el$89, line);
-      _$effect(_$p => _$setProp(_el$89, "fg", t().text, _$p));
-      return _el$89;
+    var _el$89 = _$createElement("box"),
+      _el$90 = _$createElement("box"),
+      _el$91 = _$createElement("text"),
+      _el$92 = _$createElement("b");
+    _$insertNode(_el$89, _el$90);
+    _$setProp(_el$89, "flexDirection", "column");
+    _$setProp(_el$89, "width", "100%");
+    _$setProp(_el$89, "paddingLeft", 2);
+    _$setProp(_el$89, "paddingRight", 2);
+    _$setProp(_el$89, "paddingTop", 1);
+    _$setProp(_el$89, "paddingBottom", 1);
+    _$insertNode(_el$90, _el$91);
+    _$setProp(_el$90, "justifyContent", "center");
+    _$setProp(_el$90, "width", "100%");
+    _$setProp(_el$90, "marginBottom", 1);
+    _$insertNode(_el$91, _el$92);
+    _$insertNode(_el$92, _$createTextNode(`Embedding`));
+    _$insert(_el$89, () => lines().map(line => (() => {
+      var _el$94 = _$createElement("text");
+      _$insert(_el$94, line);
+      _$effect(_$p => _$setProp(_el$94, "fg", t().text, _$p));
+      return _el$94;
     })()), null);
-    _$effect(_$p => _$setProp(_el$86, "fg", t().accent, _$p));
-    return _el$84;
+    _$effect(_$p => _$setProp(_el$91, "fg", t().accent, _$p));
+    return _el$89;
   })();
 };
 async function showEmbedDialog(api, targetSessionId = getSessionId(api)) {
@@ -1267,11 +1308,11 @@ function renderTuiProbeCustomArm(api, result) {
     api.ui.dialog.replace(() => {
       try {
         return (() => {
-          var _el$90 = _$createElement("box"),
-            _el$91 = _$createElement("text");
-          _$insertNode(_el$90, _el$91);
-          _$insertNode(_el$91, _$createTextNode(`probe`));
-          return _el$90;
+          var _el$95 = _$createElement("box"),
+            _el$96 = _$createElement("text");
+          _$insertNode(_el$95, _el$96);
+          _$insertNode(_el$96, _$createTextNode(`probe`));
+          return _el$95;
         })();
       } catch (error) {
         result.customThrew = probeErrorMessage(error);
@@ -1344,11 +1385,11 @@ function reportTuiProbe(api, result) {
   if (result.customThrew === null) {
     try {
       api.ui.dialog.replace(() => (() => {
-        var _el$93 = _$createElement("box"),
-          _el$94 = _$createElement("text");
-        _$insertNode(_el$93, _el$94);
-        _$insert(_el$94, summary);
-        return _el$93;
+        var _el$98 = _$createElement("box"),
+          _el$99 = _$createElement("text");
+        _$insertNode(_el$98, _el$99);
+        _$insert(_el$99, summary);
+        return _el$98;
       })());
       return;
     } catch (error) {

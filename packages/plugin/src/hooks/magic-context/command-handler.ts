@@ -568,7 +568,12 @@ export function createMagicContextCommandHandler(deps: {
     cacheTtlConfigured?: boolean;
     configParseFailures?: ConfigParseFailure[];
     /** Builds the status payload shared with the TUI dialog for a chat-only fallback. */
-    getStatusDetail?: (sessionId: string, moduleStatus?: RustSessionStatus) => StatusDetail;
+    // Fork: buildStatusDetail is async (external-memory status is an awaited read),
+    // so this accepts either shape — upstream's sync contract still satisfies it.
+    getStatusDetail?: (
+        sessionId: string,
+        moduleStatus?: RustSessionStatus,
+    ) => StatusDetail | Promise<StatusDetail>;
     /** Optional live context limit resolver — used for tokens-based threshold display. */
     getContextLimit?: (sessionId: string) => number | undefined;
     getDreamerProgress?: () =>
@@ -826,7 +831,7 @@ export function createMagicContextCommandHandler(deps: {
                     const detail =
                         rustMode && !rustStatus
                             ? undefined
-                            : deps.getStatusDetail?.(
+                            : await deps.getStatusDetail?.(
                                   sessionId,
                                   rustStatus as RustSessionStatus | undefined,
                               );
@@ -861,7 +866,7 @@ export function createMagicContextCommandHandler(deps: {
                         // the "Skill memory" section can resolve a project identity
                         // for sessions that don't have dreamer configured.
                         const statusDirectory = deps.dreamer?.projectPath ?? process.cwd();
-                        const statusOutput = await executeStatus(
+                        const statusOutput = executeStatus(
                             deps.db,
                             sessionId,
                             deps.protectedTags,
@@ -908,7 +913,7 @@ export function createMagicContextCommandHandler(deps: {
                     );
                     combinedStatus = rustMode
                         ? "## Magic Status — Unavailable\n\nRust module status failed while formatting. Canonical session usage, tags, and compartments live in mc-store, so context.db mirror values are intentionally omitted."
-                        : await executeStatus(deps.db, sessionId, deps.protectedTags);
+                        : executeStatus(deps.db, sessionId, deps.protectedTags);
                 }
 
                 result += result ? `\n\n${combinedStatus}` : combinedStatus;

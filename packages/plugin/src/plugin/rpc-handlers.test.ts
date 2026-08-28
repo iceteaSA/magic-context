@@ -119,7 +119,9 @@ describe("sidebar snapshot RPC failures", () => {
 });
 
 describe("buildStatusDetail — active profile", () => {
-    test("includes the resolved profile name in the RPC status payload", () => {
+    // Fork: buildStatusDetail is async (external-memory status is an awaited
+    // read), so upstream's synchronous call shape needs awaiting here.
+    test("includes the resolved profile name in the RPC status payload", async () => {
         const db = createTestDb();
         try {
             expect(
@@ -137,7 +139,7 @@ describe("buildStatusDetail — active profile", () => {
 });
 
 describe("buildStatusDetail — storage version probe", () => {
-    test("reports the upstream lane when fork rows share context.db", () => {
+    test("reports the upstream lane when fork rows share context.db", async () => {
         const db = createTestDb();
         try {
             db.prepare(
@@ -489,7 +491,7 @@ describe("buildSidebarSnapshot — context limit", () => {
 });
 
 describe("buildSidebarSnapshot — Rust module status merge", () => {
-    test("uses module pressure, boundary, coverage, and compartment counts", () => {
+    test("uses module pressure, boundary, coverage, and compartment counts", async () => {
         const db = createTestDb();
         try {
             const sessionId = "ses-sidebar-rust-status";
@@ -552,7 +554,7 @@ describe("buildSidebarSnapshot — Rust module status merge", () => {
 });
 
 describe("compaction-off sidebar RPC data", () => {
-    test("reports the resolved mode and raw native usage independently of threshold fill", () => {
+    test("reports the resolved mode and raw native usage independently of threshold fill", async () => {
         const db = createTestDb();
         try {
             const sessionId = "ses-native-sidebar";
@@ -630,7 +632,7 @@ describe("compaction-off sidebar RPC data", () => {
 });
 
 describe("buildStatusDetail — history token reuse (council audit bg_51106601 #1)", () => {
-    test("sets historyBlockTokens from compartmentTokens only (facts retired in v2)", () => {
+    test("sets historyBlockTokens from compartmentTokens only (facts retired in v2)", async () => {
         const db = createTestDb();
         try {
             const sessionId = "ses-status-history-tokens";
@@ -686,7 +688,7 @@ describe("buildStatusDetail — history token reuse (council audit bg_51106601 #
 });
 
 describe("buildStatusDetail — storage versions probe", () => {
-    test("reports the live context.db schema version and the plugin fence", () => {
+    test("reports the live context.db schema version and the plugin fence", async () => {
         const db = createTestDb();
         try {
             const detail = buildStatusDetail(db, "ses-storage-versions", process.cwd());
@@ -706,7 +708,7 @@ describe("buildStatusDetail — storage versions probe", () => {
         }
     });
 
-    test("follows an older live DB version while the fence stays put", () => {
+    test("follows an older live DB version while the fence stays put", async () => {
         const db = createTestDb();
         try {
             // Simulate a DB migrated by an older plugin: drop the recorded versions
@@ -724,7 +726,7 @@ describe("buildStatusDetail — storage versions probe", () => {
 });
 
 describe("buildStatusDetail — mural read surface", () => {
-    test("reads the graduated top-level mural config", () => {
+    test("reads the graduated top-level mural config", async () => {
         const db = createTestDb();
         try {
             const directory = process.cwd();
@@ -768,7 +770,7 @@ describe("buildStatusDetail — cacheNeverExpires with 'never' TTL", () => {
                 "UPDATE session_meta SET cache_ttl = ?, last_response_time = ? WHERE session_id = ?",
             ).run("never", Date.now() - 60_000, sessionId);
 
-            const detail = await buildStatusDetail(db, sessionId, directory);
+            const detail = buildStatusDetail(db, sessionId, directory);
 
             expect(detail.cacheNeverExpires).toBe(true);
             expect(detail.cacheExpired).toBe(false);
@@ -883,7 +885,7 @@ describe("buildStatusDetail — skill memory section", () => {
                 createdAt: Date.now(),
             });
 
-            const detail = await buildStatusDetail(db, sessionId, directory);
+            const detail = buildStatusDetail(db, sessionId, directory);
             expect(detail.skillMemory).not.toBeNull();
             expect(detail.skillMemory?.totalNotes).toBe(4);
             expect(detail.skillMemory?.skillsWithNotes).toBe(2);
@@ -922,7 +924,7 @@ describe("buildStatusDetail — skill memory section", () => {
                 createdAt: Date.now(),
             });
 
-            const detail = await buildStatusDetail(db, sessionId, directory);
+            const detail = buildStatusDetail(db, sessionId, directory);
             expect(detail.skillMemory).not.toBeNull();
             expect(detail.skillMemory?.totalNotes).toBe(0);
             expect(detail.skillMemory?.skillsWithNotes).toBe(0);

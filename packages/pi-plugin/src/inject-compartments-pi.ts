@@ -1150,12 +1150,18 @@ function renderUserProfileBlock(
 	db: ContextDatabase,
 	wrapper = "user-profile",
 	memoriesOverride?: UserMemory[],
+	externalProfileLines: readonly { content: string }[] = [],
 ): string {
 	const memories = memoriesOverride ?? safeGetActiveUserMemoriesPi(db);
-	if (memories.length === 0) return "";
-	return `<${wrapper}>\n${memories
-		.map((memory) => `- ${escapeXmlContent(memory.content)}`)
-		.join("\n")}\n</${wrapper}>`;
+	const localLines = memories.map(
+		(memory) => `- ${escapeXmlContent(memory.content)}`,
+	);
+	const externalLines = externalProfileLines.map(
+		(item) => `- ${escapeXmlContent(item.content)}`,
+	);
+	const allLines = [...localLines, ...externalLines];
+	if (allLines.length === 0) return "";
+	return `<${wrapper}>\n${allLines.join("\n")}\n</${wrapper}>`;
 }
 
 export function renderM0Pi(
@@ -1431,7 +1437,14 @@ function readFrozenM0InputsPi(
 				state.memoryEnabled !== false && state.muralEnabled === true,
 			renderBudgetIdentity: renderBudgetIdentityPi(state),
 		};
-		return { docs, markers, compartments, memories, userProfile, workspace };
+		return {
+			docs,
+			markers,
+			compartments,
+			memories,
+			userProfile,
+			workspace,
+		};
 	});
 	return read();
 }
@@ -1828,6 +1841,10 @@ function renderMemoryUpdatesBlockPi(args: {
 interface RenderM1PiResult {
 	text: string;
 	memoryUpdateCount: number;
+	/** True when freshly rendered from current DB state. False when replayed
+	 *  from a sibling-adoption row. The pressure-refold backstop must only fire
+	 *  on recomputed bytes (parity with OpenCode RenderM1Result.recomputed). */
+	recomputed: boolean;
 }
 
 function renderM1PiWithMetadata(
@@ -1955,6 +1972,7 @@ function renderM1PiWithMetadata(
 		return {
 			text: PI_M1_PLACEHOLDER,
 			memoryUpdateCount: memoryUpdates.count,
+			recomputed: true,
 		};
 	}
 	// Join with "\n" (single newline) to match OpenCode renderM1 exactly — the
@@ -1964,6 +1982,7 @@ function renderM1PiWithMetadata(
 			? `<knowledge-updates>\n${sections.join("\n")}\n</knowledge-updates>`
 			: `<session-history-since>\n${sections.join("\n")}\n</session-history-since>`,
 		memoryUpdateCount: memoryUpdates.count,
+		recomputed: true,
 	};
 }
 
@@ -1995,6 +2014,7 @@ interface CachedPiM0M1Row {
 	cached_m0_system_hash: string | null;
 	cached_m0_model_key: string | null;
 	cached_m0_project_identity: string | null;
+	cached_m0_external_recall_hash: string | null;
 	cached_m0_last_baseline_end_message_id: string | null;
 	memory_block_ids: string | null;
 }
@@ -2045,7 +2065,7 @@ function readCachedPiM0M1Row(
 					cached_m0_upgrade_state,
 					cached_m0_system_hash,
 					cached_m0_model_key,
-					cached_m0_project_identity,
+				cached_m0_project_identity,
 					cached_m0_last_baseline_end_message_id,
 					memory_block_ids
 			   FROM session_meta
@@ -2535,6 +2555,15 @@ export function injectM0M1Pi(
 	// Token counts (NOT char lengths) on both sides of the ratio — parity with
 	// OpenCode. The documented intent is "m[1] exceeds ~15% of m[0] tokens";
 	// char length diverges from token count on XML-heavy / non-Latin content.
+	//
+	// External recall content must NEVER CAUSE a fold (spec: not a bust trigger);
+	// it rides along when a fold fires for other reasons. Two layers of
+	// subtraction from m1Tokens: the delta itself (late recall) AND a small
+	// wrapper overhead (every m[1] carries the wrapper, empty or not — not a
+	// drift signal). The wrapper tokens are also subtracted from the absolute
+	// cap budget for symmetry, so a tiny m[0] baseline (where the wrapper
+	// alone would exceed the cap) does not falsely fire a refold when the
+	// only m[1] content is the recall delta. (Parity with OpenCode injectM0M1.)
 	const M0_DRIFT_RATIO_FLOOR_TOKENS = 500;
 	const M1_DRIFT_RATIO = 0.15;
 	const M1_ABSOLUTE_CAP_RATIO = 0.2;
@@ -2547,7 +2576,10 @@ export function injectM0M1Pi(
 		m0,
 		m1,
 	);
-	const m1OverAbsoluteCap = m1HasContent && m1Tokens > m1AbsoluteBudget;
+	const m1PressureTokens = m1Tokens;
+	const m1AbsoluteContentBudget = m1AbsoluteBudget;
+	const m1OverAbsoluteCap =
+		m1HasContent && m1PressureTokens > m1AbsoluteContentBudget;
 	if (
 		!materialized &&
 		!contentionExhausted &&
@@ -2557,7 +2589,7 @@ export function injectM0M1Pi(
 			m1OverAbsoluteCap ||
 			(m1HasContent &&
 				m0Tokens >= M0_DRIFT_RATIO_FLOOR_TOKENS &&
-				m1Tokens > m0Tokens * M1_DRIFT_RATIO))
+				m1PressureTokens > m0Tokens * M1_DRIFT_RATIO))
 	) {
 		decision = { value: true, reason: "drift" };
 		try {

@@ -530,7 +530,7 @@ export function persistCachedM0(
             cached_m0_system_hash = ?,
             cached_m0_tool_set_hash = ?,
             cached_m0_model_key = ?,
-            cached_m0_project_identity = ?
+                     cached_m0_project_identity = ?
          WHERE session_id = ?`,
     ).run(
         Buffer.from(payload.m0Bytes),

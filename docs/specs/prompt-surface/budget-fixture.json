@@ -90,12 +90,12 @@
                 "tokens": 391
             },
             "ctx_memory": {
-                "chars": 980,
-                "tokens": 234
+                "chars": 1171,
+                "tokens": 278
             },
             "ctx_search": {
-                "chars": 1253,
-                "tokens": 309
+                "chars": 1509,
+                "tokens": 362
             },
             "ctx_skill_note": {
                 "chars": 300,
@@ -120,12 +120,12 @@
                 "tokens": 317
             },
             "ctx_memory": {
-                "chars": 840,
-                "tokens": 201
+                "chars": 1247,
+                "tokens": 291
             },
             "ctx_search": {
-                "chars": 777,
-                "tokens": 184
+                "chars": 847,
+                "tokens": 200
             },
             "ctx_skill_note": {
                 "chars": 690,
@@ -135,12 +135,12 @@
                 "chars": 396,
                 "tokens": 95
             },
-            "totalTokens": 1173
+            "totalTokens": 1279
         },
-        "builtInProviderVisibleTotal": 5260
+        "builtInProviderVisibleTotal": 5463
     },
-    "mutableProseBaseline": 4087,
-    "integerLightCeiling": 2043,
+    "mutableProseBaseline": 4184,
+    "integerLightCeiling": 2096,
     "includedSurfaces": [
         "The primary built-in full guidance section for the exact feature variant above.",
         "One built-in full top-level description for every active ctx_* tool above.",
@@ -167,5 +167,5 @@
             "packages/plugin/src/tools/ctx-search/constants.ts#CTX_SEARCH_DESCRIPTION"
         ]
     },
-    "downstreamNote": "DOWNSTREAM MEASUREMENT, NOT A RATIFICATION. This fork adds ctx_skill_note and ctx_skill_recall (skill-memory), so the measured surface is larger than the upstream s2-r1 numbers. Values here are re-measured from source with the same tokenizer identity and the same floor(0.50 * mutableProseBaseline) policy; only the measurements moved, never the policy, the tokenizer, the primary variant, or the inclusion/exclusion lists. Upstream baseline for reference: mutableProseBaseline 3650, integerLightCeiling 1825, builtInProviderVisibleTotal 4560, 5 active tools. The ceiling is a derived consequence of the larger surface, not a request to relax the budget -- ratifying the increase is upstream's call."
+    "downstreamNote": "DOWNSTREAM MEASUREMENT, NOT A RATIFICATION. This is the union tree: it carries BOTH downstream features, so its surface is larger than either feature branch alone. skill-memory adds two tools (ctx_skill_note, ctx_skill_recall) plus their guidance prose; external-memory widens two existing tools (ctx_memory gains scope:\"global\", ctx_search gains the \"external\" source) without adding any. Re-measured from source on this tree -- neither parent branch's fixture is correct here. Same tokenizer identity and the same floor(0.50 * mutableProseBaseline) policy; only measurements moved, never the policy, tokenizer, primary variant, or inclusion/exclusion lists. Upstream baseline for reference: mutableProseBaseline 3650, integerLightCeiling 1825, builtInProviderVisibleTotal 4560, 5 active tools. Per-feature numbers live on the respective PR branches; ratifying any increase is upstream's call."
 }

@@ -6,6 +6,12 @@ import { Database } from "../../../shared/sqlite";
 import { closeQuietly } from "../../../shared/sqlite-helpers";
 import { CATEGORY_DEFAULT_TTL } from "./constants";
 import type { EmbeddingProvider } from "./embedding-provider";
+import {
+    _resetExternalMemoryForTests,
+    _setTestExternalBackendFactory,
+    initializeExternalMemory,
+} from "./external-memory";
+import type { ExternalMemoryBackend, ExternalMemoryRetainItem } from "./external-memory-provider";
 import { computeNormalizedHash } from "./normalize-hash";
 
 const mockEmbedText = mock(async (): Promise<{ vector: Float32Array } | null> => null);
@@ -144,7 +150,35 @@ afterEach(() => {
             db = null;
         }
     }
+    _resetExternalMemoryForTests();
 });
+
+const HINDSIGHT_TEST_CONFIG = {
+    provider: "hindsight" as const,
+    endpoint: "http://10.0.0.1:8889",
+    project_bank: "mc-{name}-{id8}",
+    main_bank: "main-memory",
+    retain_sources: ["historian", "agent", "dreamer"] as ("historian" | "agent" | "dreamer")[],
+    tags: [] as string[],
+    search: true,
+};
+
+function captureTee(): ExternalMemoryRetainItem[][] {
+    const calls: ExternalMemoryRetainItem[][] = [];
+    _setTestExternalBackendFactory(
+        (): ExternalMemoryBackend => ({
+            backendId: "fake:test",
+            initialize: async () => true,
+            retain: async (items) => {
+                calls.push([...items]);
+                return items.length;
+            },
+            dispose: async () => {},
+        }),
+    );
+    initializeExternalMemory(HINDSIGHT_TEST_CONFIG);
+    return calls;
+}
 
 describe("promotion", () => {
     describe("#given promotable facts", () => {
@@ -491,6 +525,61 @@ describe("promotion", () => {
                 }
             ).count;
             expect(count).toBe(0);
+        });
+    });
+
+    describe("#given external memory tee", () => {
+        it("tees newly inserted facts with project scope", async () => {
+            db = makeMemoryDatabase();
+            const calls = captureTee();
+
+            const refs = promoteSessionFactsDurable(db, "ses_1", "git:rootsha", [
+                { category: "PROJECT_RULES", content: "tee me" },
+            ]);
+            await embedPromotedFacts(db, "ses_1", "git:rootsha", refs, { projectName: "myproj" });
+            await Bun.sleep(10);
+
+            expect(calls.length).toBe(1);
+            expect(calls[0]?.[0]).toMatchObject({
+                content: "tee me",
+                category: "PROJECT_RULES",
+                scope: "project",
+                projectIdentity: "git:rootsha",
+                projectName: "myproj",
+                sourceType: "historian",
+                sessionId: "ses_1",
+            });
+        });
+
+        it("does NOT tee dedup hits", async () => {
+            db = makeMemoryDatabase();
+            const calls = captureTee();
+
+            const refs1 = promoteSessionFactsDurable(db, "ses_1", "git:rootsha", [
+                { category: "PROJECT_RULES", content: "dup fact" },
+            ]);
+            await embedPromotedFacts(db, "ses_1", "git:rootsha", refs1);
+            await Bun.sleep(10);
+            const refs2 = promoteSessionFactsDurable(db, "ses_2", "git:rootsha", [
+                { category: "PROJECT_RULES", content: "dup fact" },
+            ]);
+            await embedPromotedFacts(db, "ses_2", "git:rootsha", refs2);
+            await Bun.sleep(10);
+
+            expect(calls.length).toBe(1);
+        });
+
+        it("does NOT tee non-promotable categories", async () => {
+            db = makeMemoryDatabase();
+            const calls = captureTee();
+
+            const refs = promoteSessionFactsDurable(db, "ses_1", "git:rootsha", [
+                { category: "NOT_A_CATEGORY", content: "skip me" },
+            ]);
+            await embedPromotedFacts(db, "ses_1", "git:rootsha", refs);
+            await Bun.sleep(10);
+
+            expect(calls.length).toBe(0);
         });
     });
 });
