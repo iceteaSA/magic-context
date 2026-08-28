@@ -237,6 +237,7 @@ async function runWithLease(args: {
     output?: string;
     beforeHistorianCollect?: () => void;
     memoryEnabled?: boolean;
+    embeddingEnabled?: boolean;
 }) {
     const holderId = `holder-${Math.random()}`;
     expect(acquireCompartmentLease(args.db, args.sessionId, holderId)).not.toBeNull();
@@ -252,6 +253,7 @@ async function runWithLease(args: {
                 currentContextLimit: 20,
                 directory: "/tmp/wrapup-runner",
                 memoryEnabled: args.memoryEnabled ?? true,
+                embeddingEnabled: args.embeddingEnabled,
                 autoPromote: true,
                 experimentalUserMemories: true,
                 fallbackModels: [],
@@ -600,6 +602,10 @@ describe("runCompartmentAgent wrapup controls", () => {
                     historianChunkTokens: 10_000,
                     forceDrainQuota: true,
                     memoryEnabled: false,
+                    // Fork: embeddings are gated on the embedding provider, not on
+                    // memory.enabled, so switch them off explicitly to keep the
+                    // embeddings stage synchronous as this test expects.
+                    embeddingEnabled: false,
                     output,
                 });
             } finally {

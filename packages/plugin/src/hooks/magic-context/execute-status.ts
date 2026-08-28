@@ -84,7 +84,7 @@ function formatExecuteThreshold(detail: ExecuteThresholdDetail, contextLimit: nu
     return `${percentage}%${clampNote}`;
 }
 
-export async function executeStatus(
+export function executeStatus(
     db: Database,
     sessionId: string,
     executeThresholdPercentageConfig:
@@ -112,7 +112,7 @@ export async function executeStatus(
         compactionEnabled?: boolean;
     },
     directory?: string,
-): Promise<string> {
+): string {
     // Single source of truth — resolver tells us both the effective percentage AND
     // which config source won (tokens vs percentage). Previously /ctx-status
     // reimplemented the token-match check here and missed progressive base-model

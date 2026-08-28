@@ -1555,6 +1555,7 @@ export function registerRpcHandlers(
             historianTimeoutMs: runConfig.historian_timeout_ms ?? DEFAULT_HISTORIAN_TIMEOUT_MS,
             memoryEnabled: config.memory?.enabled ?? true,
             autoPromote: runConfig.memory?.auto_promote ?? true,
+            embeddingEnabled: runConfig.embedding?.provider !== "off",
             historianModel: historianModel.primary,
             fallbackModels: historianModel.fallbacks,
             userMemoriesEnabled: userMemoryCollectionEnabled(runConfig.dreamer),

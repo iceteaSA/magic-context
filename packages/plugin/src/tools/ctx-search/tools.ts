@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import { type ToolDefinition, tool } from "@opencode-ai/plugin";
 import { getLastCompartmentEndMessage } from "../../features/magic-context/compartment-storage";
 import {
@@ -15,6 +16,7 @@ import {
     resolveMemoriesByIdsForSearch,
     unifiedSearch,
 } from "../../features/magic-context/search";
+import { resolveRootSessionId } from "../../features/magic-context/session-parent-registry";
 import { getVisibleMemoryIds } from "../../hooks/magic-context/inject-compartments";
 import { unwrapImitatedReducedArgs } from "../unwrap-imitated-reduced-args";
 import {
@@ -77,7 +79,7 @@ const ctxSearchArgsShape = {
         .optional()
         .describe("Latest date, YYYY-MM-DD (inclusive; default open)."),
     sources: tool.schema
-        .array(tool.schema.enum(["memory", "message", "git_commit", "primer", "note"]))
+        .array(tool.schema.enum(["memory", "message", "git_commit", "primer", "note", "external"]))
         .optional()
         .describe("Restrict to these sources; omit for all. [] searches none."),
 };
@@ -102,7 +104,7 @@ function createCtxSearchTool(deps: CtxSearchToolDeps): ToolDefinition {
                     type: "array",
                     items: "string",
                     maxItems: 5,
-                    values: ["memory", "message", "git_commit", "primer", "note"],
+                    values: ["memory", "message", "git_commit", "primer", "note", "external"],
                 },
             });
             const query = args.query?.trim();
@@ -125,13 +127,16 @@ function createCtxSearchTool(deps: CtxSearchToolDeps): ToolDefinition {
             // the live tail and must be excluded. A negative sentinel here would mean
             // "search everything" and leak the current prompt back to the agent — the
             // exact opposite of the intent (issue #131).
-            const lastCompartmentEnd = getLastCompartmentEndMessage(deps.db, toolContext.sessionID);
+            // Child sessions (subagents) have no session_meta of their own; resolve to the
+            // root so visible-memory filtering and compartment bounds read the parent state.
+            const searchSessionId = resolveRootSessionId(toolContext.sessionID);
+            const lastCompartmentEnd = getLastCompartmentEndMessage(deps.db, searchSessionId);
             const messageOrdinalCutoff = lastCompartmentEnd >= 0 ? lastCompartmentEnd : 0;
 
             // Hard-filter memories already rendered in <session-history>.
             // They're visible in message[0], so returning them wastes output
             // tokens and crowds out high-signal raw-history hits.
-            const visibleMemoryIds = getVisibleMemoryIds(deps.db, toolContext.sessionID);
+            const visibleMemoryIds = getVisibleMemoryIds(deps.db, searchSessionId);
             const diagnostics = createUnifiedSearchDiagnostics();
 
             // Resolve the session's actual project from `toolContext.directory`
@@ -177,50 +182,42 @@ function createCtxSearchTool(deps: CtxSearchToolDeps): ToolDefinition {
                     return formatSearchResults(
                         query,
                         idResults ?? [],
-                        toolContext.sessionID,
+                        searchSessionId,
                         diagnostics,
                     );
                 }
             }
 
-            const results = await unifiedSearch(
-                deps.db,
-                toolContext.sessionID,
-                projectPath,
-                query,
-                {
-                    limit: normalizeLimit(args.limit),
-                    memoryEnabled,
-                    embeddingEnabled,
-                    embedQuery: async (text, signal) => {
-                        const result = await embedTextForProject(
-                            projectPath,
-                            text,
-                            signal,
-                            "query",
-                        );
-                        return result;
-                    },
-                    isEmbeddingRuntimeEnabled: () => embeddingEnabled === true,
-                    readMessages: deps.readMessages,
-                    maxMessageOrdinal: messageOrdinalCutoff,
-                    gitCommitsEnabled,
-                    sources: normalizeSources(args.sources),
-                    visibleMemoryIds,
-                    diagnostics,
-                    gitRepositoryAvailable:
-                        typeof toolContext.directory === "string"
-                            ? directoryHasGitMetadata(toolContext.directory)
-                            : undefined,
-                    // Explicit agent search → enable literal-probe multi-query
-                    // recall for symbol/command/path lookups. Auto-search hints
-                    // (the hot path) leave this off to protect their latency.
-                    explicitSearch: true,
-                    ...dateRange,
+            const results = await unifiedSearch(deps.db, searchSessionId, projectPath, query, {
+                limit: normalizeLimit(args.limit),
+                memoryEnabled,
+                embeddingEnabled,
+                embedQuery: async (text, signal) => {
+                    const result = await embedTextForProject(projectPath, text, signal, "query");
+                    return result;
                 },
-            );
+                isEmbeddingRuntimeEnabled: () => embeddingEnabled === true,
+                readMessages: deps.readMessages,
+                maxMessageOrdinal: messageOrdinalCutoff,
+                gitCommitsEnabled,
+                sources: normalizeSources(args.sources),
+                visibleMemoryIds,
+                diagnostics,
+                gitRepositoryAvailable:
+                    typeof toolContext.directory === "string"
+                        ? directoryHasGitMetadata(toolContext.directory)
+                        : undefined,
+                // Explicit agent search → enable literal-probe multi-query
+                // recall for symbol/command/path lookups. Auto-search hints
+                // (the hot path) leave this off to protect their latency.
+                explicitSearch: true,
+                ...dateRange,
+                // External bank resolution: basename is the human-readable label;
+                // project identity (resolveProjectPath's output) is the key.
+                projectName: toolContext.directory ? basename(toolContext.directory) : undefined,
+            });
 
-            return formatSearchResults(query, results, toolContext.sessionID, diagnostics);
+            return formatSearchResults(query, results, searchSessionId, diagnostics);
         },
     });
 }

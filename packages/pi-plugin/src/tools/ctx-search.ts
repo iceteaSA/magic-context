@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 /**
  * Pi-side wrapper for the `ctx_search` tool.
  *
@@ -74,6 +75,7 @@ const ParamsSchema = Type.Object(
 					Type.Literal("git_commit"),
 					Type.Literal("primer"),
 					Type.Literal("note"),
+					Type.Literal("external"),
 				]),
 				{
 					description:
@@ -139,7 +141,14 @@ export function createCtxSearchTool(
 					type: "array",
 					items: "string",
 					maxItems: 5,
-					values: ["memory", "message", "git_commit", "primer", "note"],
+					values: [
+						"memory",
+						"message",
+						"git_commit",
+						"primer",
+						"note",
+						"external",
+					],
 				},
 			});
 			const query = params.query?.trim();
@@ -272,6 +281,9 @@ export function createCtxSearchTool(
 					// this off to protect its latency budget.
 					explicitSearch: true,
 					...dateRange,
+					// External bank resolution: basename is the human-readable label;
+					// project identity is the key.
+					projectName: ctx.cwd ? basename(ctx.cwd) : undefined,
 				},
 			);
 

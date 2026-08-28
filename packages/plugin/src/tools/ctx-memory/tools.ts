@@ -1,3 +1,5 @@
+import { basename } from "node:path";
+
 import { type ToolDefinition, tool } from "@opencode-ai/plugin";
 import { DREAMER_AGENT } from "../../agents/dreamer";
 import { getAuthorityManagedMarker } from "../../features/magic-context/context-authority";
@@ -14,6 +16,7 @@ import {
     archiveMemory,
     CATEGORY_PRIORITY,
     clearMemoryVerifications,
+    getExternalMemoryStatus,
     getMemoriesByIds,
     getMemoriesByProject,
     getMemoryByHash,
@@ -22,9 +25,13 @@ import {
     type Memory,
     type MemoryCategory,
     mergeMemoryStats,
+    removeFromExternalBackend,
     saveEmbeddingIfHashMatches,
     supersededMemory,
+    teeToExternalBackend,
     updateMemorySeenCount,
+    updateMemoryVerification,
+    upsertToExternalBackend,
     V2_MEMORY_CATEGORIES,
 } from "../../features/magic-context/memory";
 import {
@@ -33,6 +40,7 @@ import {
     getProjectEmbeddingSnapshot,
 } from "../../features/magic-context/memory/embedding";
 import { invalidateMemory } from "../../features/magic-context/memory/embedding-cache";
+import type { ExternalMemoryRemoveItem } from "../../features/magic-context/memory/external-memory-provider";
 import { createMemoryVisibilityPolicy } from "../../features/magic-context/memory/memory-visibility";
 import { computeNormalizedHash } from "../../features/magic-context/memory/normalize-hash";
 import { describeUnresolvedProjectIdentity } from "../../features/magic-context/memory/project-identity";
@@ -462,6 +470,12 @@ const ctxMemoryArgsShape = {
         ),
     limit: tool.schema.number().optional().describe("Max results for list (default 10)."),
     reason: tool.schema.string().optional().describe("Why it is being archived (optional)."),
+    scope: tool.schema
+        .enum(["project", "global"])
+        .optional()
+        .describe(
+            'Write only. "project" (default): this project\'s memory store. "global": a cross-project fact (infrastructure, tooling, environment) stored ONLY in the external long-term memory backend — use when the fact is true regardless of which project you are in. Requires an external backend; recallable from the next session onward.',
+        ),
 };
 const ctxMemoryListArgsShape = {
     category: tool.schema
@@ -500,6 +514,7 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
                 limit: "number",
                 reason: "string",
                 superseded_by: "number",
+                scope: { type: "enum", values: ["project", "global"] },
             });
             if (
                 args.action === undefined ||
@@ -507,6 +522,22 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
             ) {
                 return `Error: Action '${args.action}' is not allowed in this context.`;
             }
+
+            // Build an ExternalMemoryRemoveItem from a freshly-loaded memory row.
+            // Document identity in the external backend derives from the original
+            // content hash + project identity, so a corrective remove needs the
+            // row AS IT STOOD (not a stale in-memory `memory` from before the
+            // caller mutated it). Used by the delete/archive/update branches.
+            const buildRemoveItem = (
+                memory: { content: string; category: Memory["category"] },
+                projectIdentity: string,
+            ): ExternalMemoryRemoveItem => ({
+                content: memory.content,
+                category: memory.category as MemoryCategory,
+                scope: "project",
+                projectIdentity,
+                ...(toolContext.directory ? { projectName: basename(toolContext.directory) } : {}),
+            });
 
             // Resolve the session's actual project from `toolContext.directory`
             // each call. OpenCode's top-level `ctx.directory` (the launch dir)
@@ -556,7 +587,14 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
 
             const visibility = createMemoryVisibilityPolicy(deps.db, projectPath);
 
-            {
+            // `verify` is a fork-only, dreamer-only action with no Rust-module
+            // counterpart (rust-tool-backends' memory action union covers the
+            // primary write/read actions), so it stays on the TS path.
+            // NOTE: `list` is deliberately NOT excluded here — upstream routes it
+            // through the module under MODULE authority so a read is never served
+            // from a partial host mirror (#444). Re-adding a `list` exclusion
+            // would silently revert that fix.
+            if (args.action !== "verify") {
                 const marker = getAuthorityManagedMarker(deps.db, projectPath);
                 let authorityState: "TS" | "PREPARING" | "MODULE" | "DRAINING" | null = null;
                 try {
@@ -700,6 +738,41 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
                     return `Error: Unknown memory category '${rawCategory}'.`;
                 }
 
+                // Global scope: cross-project knowledge goes to the external
+                // long-term store's main bank ONLY — no local row. The local
+                // store is project-keyed; parking globals under a pseudo-project
+                // would corrupt the id-addressable curation model (update/
+                // archive/dreamer flows). Server-side document_id idempotency
+                // (content-hash-derived) replaces the local hash dedup, so a
+                // re-write of the same fact upserts instead of duplicating.
+                // projectIdentity/projectName ride along as ORIGIN provenance
+                // (origin-* tags + extraction context), NOT as routing — the
+                // item still lands in the main bank with scope:global, but the
+                // engine links the originating project as an entity so the
+                // fact surfaces when any project references it by name.
+                if (args.scope === "global") {
+                    if (!getExternalMemoryStatus()) {
+                        return "Error: scope 'global' requires an external memory backend (memory.external) — none is configured. Use the default project scope instead.";
+                    }
+                    void teeToExternalBackend("agent", [
+                        {
+                            content,
+                            category,
+                            scope: "global",
+                            projectIdentity: projectPath,
+                            ...(toolContext.directory
+                                ? { projectName: basename(toolContext.directory) }
+                                : {}),
+                            sourceType:
+                                toolContext.agent === DREAMER_AGENT
+                                    ? "dreamer"
+                                    : getSourceType(deps),
+                            sessionId: toolContext.sessionID,
+                        },
+                    ]);
+                    return `Queued global memory in ${category} for the long-term store (origin: this project). It has no local ID; retrieve it with ctx_search sources:["external"].`;
+                }
+
                 const existingMemory = getMemoryByHash(
                     deps.db,
                     projectPath,
@@ -733,9 +806,27 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
                 });
                 requestRustMemorySync(deps, toolContext.sessionID);
 
+                void teeToExternalBackend("agent", [
+                    {
+                        content,
+                        category,
+                        scope: "project",
+                        projectIdentity: projectPath,
+                        ...(toolContext.directory
+                            ? { projectName: basename(toolContext.directory) }
+                            : {}),
+                        sourceType:
+                            toolContext.agent === DREAMER_AGENT ? "dreamer" : getSourceType(deps),
+                        sessionId: toolContext.sessionID,
+                    },
+                ]);
+
                 return `Saved memory [ID: ${insertResult.memory.id}] in ${category}.`;
             }
 
+            // NOTE: the former `delete` action (an exact alias of archive) was
+            // removed upstream in v0.23.0; its external corrective-remove hook
+            // lives on in the `archive` branch below.
             if (args.action === "list") {
                 const limit = normalizeLimit(args.limit);
                 const category = normalizeCategory(args.category);
@@ -869,6 +960,30 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
                     content,
                 });
                 requestRustMemorySync(deps, toolContext.sessionID);
+
+                // Corrective propagation: drop the STALE external document (old
+                // content hash) and tee the corrected fact as a new document. The
+                // local row's content rewrite already happened in the transaction
+                // above, so `memory.content` is still the OLD content and
+                // `content` is the NEW content — both needed for the
+                // remove-then-tee cascade. The teed category is targetCategory,
+                // not memory.category: an update may move the fact to a new
+                // category, and the external document must land in that one.
+                void removeFromExternalBackend([buildRemoveItem(memory, projectIdentity)]);
+                void teeToExternalBackend("agent", [
+                    {
+                        content,
+                        category: targetCategory as MemoryCategory,
+                        scope: "project",
+                        projectIdentity,
+                        ...(toolContext.directory
+                            ? { projectName: basename(toolContext.directory) }
+                            : {}),
+                        sourceType:
+                            toolContext.agent === DREAMER_AGENT ? "dreamer" : getSourceType(deps),
+                        sessionId: toolContext.sessionID,
+                    },
+                ]);
 
                 return `Updated memory [ID: ${memory.id}] in ${targetCategory}.`;
             }
@@ -1091,8 +1206,14 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
 
                 // Validate the whole batch BEFORE mutating anything so a typo'd
                 // id can't half-archive a batch (all-or-nothing, matching the
-                // single-transaction write below).
-                const targets: Array<{ memoryId: number; projectIdentity: string }> = [];
+                // single-transaction write below). The pre-mutation row rides
+                // along: the external corrective remove derives its document_id
+                // from the content AS IT STOOD.
+                const targets: Array<{
+                    memoryId: number;
+                    projectIdentity: string;
+                    memory: Memory;
+                }> = [];
                 for (const memoryId of archiveIds) {
                     const rawProjectPath = projectPathForMemoryId(deps.db, memoryId);
                     const memory = getMemoryById(deps.db, memoryId);
@@ -1113,6 +1234,7 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
                     targets.push({
                         memoryId,
                         projectIdentity: targetIdentityForStoredPath(rawProjectPath),
+                        memory,
                     });
                 }
 
@@ -1141,11 +1263,52 @@ function createCtxMemoryTool(deps: CtxMemoryToolDeps): ToolDefinition {
                     }
                 });
                 requestRustMemorySync(deps, toolContext.sessionID);
+                // Corrective propagation: the facts are gone locally (archived,
+                // not merely hidden) → drop the external documents. One batched
+                // call for the whole archive batch, after the local commit.
+                void removeFromExternalBackend(
+                    targets.map((target) => buildRemoveItem(target.memory, target.projectIdentity)),
+                );
                 const idList = targets.map((t) => t.memoryId).join(", ");
                 const plural = targets.length > 1 ? "memories" : "memory";
                 return args.reason?.trim()
                     ? `Archived ${plural} [ID: ${idList}] (${args.reason.trim()}).`
                     : `Archived ${plural} [ID: ${idList}].`;
+            }
+
+            if (args.action === "verify") {
+                const verifyIds = args.ids;
+                if (verifyIds?.length !== 1 || !verifyIds.every(Number.isInteger)) {
+                    return "Error: 'ids' must contain exactly one integer memory ID when action is 'verify'.";
+                }
+                const verifyId = verifyIds[0];
+                const rawProjectPath = projectPathForMemoryId(deps.db, verifyId);
+                const memory = getMemoryById(deps.db, verifyId);
+                if (!memory || !rawProjectPath || !memoryOwnedByTool(memory)) {
+                    return `Error: Memory with ID ${verifyId} was not found.`;
+                }
+                const projectIdentity = projectIdentityForStoredPath(rawProjectPath);
+                updateMemoryVerification(deps.db, memory.id, "verified");
+                // Verbatim re-retain = same document_id = server-side upsert →
+                // refreshes Hindsight's mentioned_at recency with ZERO duplicate
+                // risk. verifiedAt lands in metadata.verified_at.
+                void upsertToExternalBackend([
+                    {
+                        content: memory.content,
+                        category: memory.category as MemoryCategory,
+                        scope: "project",
+                        projectIdentity,
+                        ...(toolContext.directory
+                            ? { projectName: basename(toolContext.directory) }
+                            : {}),
+                        sourceType: "dreamer",
+                        sessionId: toolContext.sessionID,
+                        verifiedAt: Date.now(),
+                    },
+                ]);
+                // No queueMemoryMutation: verification status is not rendered in
+                // memory lines, so the cached m[0]/m[1] bytes are unaffected.
+                return `Verified memory [ID: ${memory.id}].`;
             }
 
             return "Error: Unknown action.";

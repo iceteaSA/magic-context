@@ -74,6 +74,9 @@ export const RENDERED_PREFIXES: readonly string[] = [
 export const OMITTED_BY_DESIGN: Readonly<Record<string, string>> = {
   profile:
     "per-repository model-profile selector; deferred until the Alfonso Desktop profile editor is available",
+  // Fork-only surface. The object prefix covers every child leaf.
+  "memory.external":
+    "fork-only external memory backend (Hindsight); user-tier only by design \u2014 project configs are stripped of it in project-security.ts, and the endpoint/api_key pair is deliberately not editable from the dashboard",
   profiles:
     "user-owned model-profile definitions; deferred until the Alfonso Desktop profile editor is available",
   "system_prompt_injection.skip_signatures":

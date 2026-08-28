@@ -19,6 +19,8 @@ import {
     startLeaseHeartbeat,
 } from "../dreamer/lease";
 import { REVIEW_USER_MEMORIES_SYSTEM_PROMPT } from "../dreamer/task-prompts";
+import { removeFromExternalBackend, teeToExternalBackend } from "../memory/external-memory";
+import type { ExternalMemoryRemoveItem } from "../memory/external-memory-provider";
 import { bumpProjectUserProfileVersion } from "../storage";
 import { recordChildInvocation, type TokenTotals } from "../subagent-token-capture";
 import {
@@ -120,6 +122,9 @@ export async function reviewUserMemories(args: ReviewUserMemoriesArgs): Promise<
     }
 
     const stableMemories = getActiveUserMemories(args.db);
+    // Pre-mutation content of every stable memory, for the external-store
+    // corrective removes computed after the write (new content is persisted by then).
+    const stableContentById = new Map(stableMemories.map((m) => [m.id, m.content]));
     log(
         `[dreamer] user-memories: reviewing ${candidates.length} candidate(s) against ${stableMemories.length} stable memorie(s)`,
     );
@@ -263,7 +268,7 @@ If no promotions are warranted, return empty arrays. Always consume reviewed can
                           ...(run.completion.modelId ? { modelId: run.completion.modelId } : {}),
                       }),
             });
-            return applyReviewVerdict(args, leaseKey, run.validated, result);
+            return applyReviewVerdict(args, leaseKey, run.validated, result, stableContentById);
         }
         const client = args.client;
         if (!client) {
@@ -332,7 +337,7 @@ If no promotions are warranted, return empty arrays. Always consume reviewed can
         promptSettled = true;
 
         recordInvocation({ status: "completed", messages: reviewRun.output });
-        return applyReviewVerdict(args, leaseKey, reviewRun.validated, result);
+        return applyReviewVerdict(args, leaseKey, reviewRun.validated, result, stableContentById);
     } catch (error) {
         const errorDescription = describeError(error);
         log(
@@ -374,6 +379,7 @@ function applyReviewVerdict(
     leaseKey: string,
     parsed: ReviewVerdict,
     result: ReviewResult,
+    stableContentById: ReadonlyMap<number, string>,
 ): ReviewResult {
     const promotions = (parsed.promote ?? [])
         .map((p) => ({
@@ -381,13 +387,19 @@ function applyReviewVerdict(
             candidateIds: p.candidate_ids ?? [],
         }))
         .filter((p) => p.content.length > 0);
+    // Coerce LLM-provided ids to integers: a stringified id ("5") would
+    // pass a truthiness check but miss both the number-keyed snapshot Map
+    // (silently skipping the external corrective remove — resurrecting
+    // dismissed memories next session) and any strict-typed DB binding.
     const updates = (parsed.update_existing ?? [])
         .map((u) => ({
-            memoryId: u.memory_id,
+            memoryId: Number(u.memory_id),
             content: u.content?.trim() ?? "",
         }))
-        .filter((u) => Boolean(u.memoryId) && u.content.length > 0);
-    const dismissals = (parsed.dismiss_existing ?? []).filter((d) => Boolean(d.memory_id));
+        .filter((u) => Number.isInteger(u.memoryId) && u.memoryId > 0 && u.content.length > 0);
+    const dismissals = (parsed.dismiss_existing ?? [])
+        .map((d) => ({ ...d, memory_id: Number(d.memory_id) }))
+        .filter((d) => Number.isInteger(d.memory_id) && d.memory_id > 0);
     const consumeCandidateIds = parsed.consume_candidate_ids ?? [];
 
     // Re-check the lease only after BEGIN IMMEDIATE has serialized writers.
@@ -414,6 +426,39 @@ function applyReviewVerdict(
             bumpProjectUserProfileVersion(args.db);
         }
     });
+
+    // Corrective propagation (W2): dismissed/updated stable user memories
+    // must leave the external store too, or the profile recall slice will
+    // resurrect them next session. Updates also re-tee the new content so
+    // the fresh text lands in the main bank immediately.
+    const removedItems: ExternalMemoryRemoveItem[] = [];
+    for (const dismissal of dismissals) {
+        const oldContent = stableContentById.get(dismissal.memory_id);
+        if (oldContent) {
+            removedItems.push({ content: oldContent, category: "USER_PROFILE", scope: "user" });
+        }
+    }
+    for (const update of updates) {
+        const oldContent = stableContentById.get(update.memoryId);
+        if (oldContent && oldContent !== update.content) {
+            removedItems.push({ content: oldContent, category: "USER_PROFILE", scope: "user" });
+        }
+    }
+    if (removedItems.length > 0) {
+        void removeFromExternalBackend(removedItems);
+    }
+    const teed = [...updates.map((u) => u.content), ...promotions.map((p) => p.content)];
+    if (teed.length > 0) {
+        void teeToExternalBackend(
+            "dreamer",
+            teed.map((content) => ({
+                content,
+                category: "USER_PROFILE" as const,
+                scope: "user" as const,
+                sourceType: "dreamer" as const,
+            })),
+        );
+    }
 
     result.promoted = promotions.length;
     result.merged = updates.length;
