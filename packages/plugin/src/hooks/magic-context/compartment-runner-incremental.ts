@@ -1,3 +1,5 @@
+import { basename } from "node:path";
+
 import { embedAndStoreCompartmentChunks } from "../../features/magic-context/compartment-embedding";
 import { insertCompartmentEvents } from "../../features/magic-context/compartment-events";
 import {
@@ -28,6 +30,7 @@ export {
 import { isCompartmentLeaseHeld } from "../../features/magic-context/compartment-lease";
 import {
     embedPromotedFacts,
+    type PromotedMemoryRef,
     promoteSessionFactsDurable,
 } from "../../features/magic-context/memory";
 import { resolveProjectIdentity } from "../../features/magic-context/memory/project-identity";
@@ -931,7 +934,7 @@ export async function runCompartmentAgent(deps: HiddenCompartmentRunnerDeps): Pr
                 `historian unanchored promotion skipped: reason=${unanchoredPromotionSkipReason} facts=${validatedPass.facts?.length ?? 0} user_observations=${validatedPass.userObservations?.length ?? 0} primers=${validatedPass.primerCandidates?.length ?? 0} events_publishable=${publishableEvents.length}/${validatedPass.events?.length ?? 0}`,
             );
         }
-        let promotedFactRefs: Array<{ memoryId: number; content: string }> = [];
+        let promotedFactRefs: PromotedMemoryRef[] = [];
         let promotedFactCount = 0;
         let publishedEventCount = 0;
         let persistedIds: number[] = [];
@@ -1220,6 +1223,7 @@ export async function runCompartmentAgent(deps: HiddenCompartmentRunnerDeps): Pr
                         sessionId,
                         promotionProjectIdentity,
                         promotedFactRefs,
+                        { projectName: basename(promotionDirectory) },
                     );
                 } catch (error) {
                     failed = true;
