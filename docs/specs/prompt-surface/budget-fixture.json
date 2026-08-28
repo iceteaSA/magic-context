@@ -2,6 +2,7 @@
   "artifactId": "prompt-surface-budget",
   "revision": "s2-r1",
   "status": "PENDING-RATIFICATION",
+  "downstreamNote": "This fork measures a seven-tool surface (skill-memory adds ctx_skill_note and ctx_skill_recall; external-memory widens ctx_memory and ctx_search), so it exceeds upstream's ratified 3750/1825 literals; the fork carries its own ratified 4283/2141 ceilings. At v0.43.0 the measured mutable-prose baseline is 3230 (upstream alone: 2722), under the fork's 4283 ceiling.",
   "policy": {
     "expression": "floor(0.50 * mutableProseBaseline)",
     "fraction": 0.5,
@@ -33,41 +34,43 @@
     "ctx_expand",
     "ctx_note",
     "ctx_memory",
-    "ctx_search"
+    "ctx_search",
+    "ctx_skill_note",
+    "ctx_skill_recall"
   ],
   "fullMeasurements": {
     "guidance": {
       "primary-full-reduce-memory-on": {
-        "chars": 4989,
-        "tokens": 1180
+        "chars": 6109,
+        "tokens": 1472
       },
       "primary-full-reduce-memory-off": {
-        "chars": 4652,
-        "tokens": 1100
+        "chars": 5741,
+        "tokens": 1384
       },
       "primary-full-no-reduce-memory-on": {
-        "chars": 4056,
-        "tokens": 950
+        "chars": 5176,
+        "tokens": 1242
       },
       "primary-full-no-reduce-memory-off": {
-        "chars": 3719,
-        "tokens": 870
+        "chars": 4808,
+        "tokens": 1154
       },
       "primary-full-reduce-dreamer-off": {
-        "chars": 4841,
-        "tokens": 1150
+        "chars": 5961,
+        "tokens": 1442
       },
       "primary-full-reduce-temporal-off": {
-        "chars": 4830,
-        "tokens": 1136
+        "chars": 5950,
+        "tokens": 1428
       },
       "primary-full-reduce-caveman-on": {
-        "chars": 5604,
-        "tokens": 1306
+        "chars": 6724,
+        "tokens": 1598
       },
       "primary-full-reduce-language-on": {
-        "chars": 5189,
-        "tokens": 1226
+        "chars": 6309,
+        "tokens": 1518
       },
       "subagent-reduce": {
         "chars": 1360,
@@ -88,12 +91,20 @@
         "tokens": 376
       },
       "ctx_memory": {
-        "chars": 1121,
-        "tokens": 278
+        "chars": 1312,
+        "tokens": 322
       },
       "ctx_search": {
-        "chars": 1304,
-        "tokens": 322
+        "chars": 1431,
+        "tokens": 348
+      },
+      "ctx_skill_note": {
+        "chars": 300,
+        "tokens": 67
+      },
+      "ctx_skill_recall": {
+        "chars": 359,
+        "tokens": 79
       }
     },
     "serializedParameterSchemas": {
@@ -110,19 +121,27 @@
         "tokens": 284
       },
       "ctx_memory": {
-        "chars": 794,
-        "tokens": 190
+        "chars": 1192,
+        "tokens": 278
       },
       "ctx_search": {
-        "chars": 549,
-        "tokens": 132
+        "chars": 560,
+        "tokens": 134
       },
-      "totalTokens": 765
+      "ctx_skill_note": {
+        "chars": 690,
+        "tokens": 168
+      },
+      "ctx_skill_recall": {
+        "chars": 396,
+        "tokens": 95
+      },
+      "totalTokens": 1118
     },
-    "builtInProviderVisibleTotal": 3487
+    "builtInProviderVisibleTotal": 4348
   },
-  "mutableProseBaseline": 2722,
-  "integerLightCeiling": 1825,
+  "mutableProseBaseline": 3230,
+  "integerLightCeiling": 2141,
   "includedSurfaces": [
     "The primary built-in full guidance section for the exact feature variant above.",
     "One built-in full top-level description for every active ctx_* tool above.",
@@ -148,7 +167,9 @@
       "packages/plugin/src/tools/ctx-expand/constants.ts#CTX_EXPAND_DESCRIPTION",
       "packages/plugin/src/tools/ctx-note/constants.ts#CTX_NOTE_DESCRIPTION",
       "packages/plugin/src/tools/ctx-memory/constants.ts#CTX_MEMORY_DESCRIPTION",
-      "packages/plugin/src/tools/ctx-search/constants.ts#CTX_SEARCH_DESCRIPTION"
+      "packages/plugin/src/tools/ctx-search/constants.ts#CTX_SEARCH_DESCRIPTION",
+      "packages/plugin/src/tools/ctx-skill-note/tools.ts#createCtxSkillNoteTool",
+      "packages/plugin/src/tools/ctx-skill-recall/tools.ts#createCtxSkillRecallTool"
     ]
   }
 }

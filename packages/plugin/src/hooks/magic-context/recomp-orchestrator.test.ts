@@ -56,6 +56,7 @@ function makeCtx(
         historianTimeoutMs: 60_000,
         memoryEnabled: true,
         autoPromote: false,
+        embeddingEnabled: true,
         fallbackModels: [],
         userMemoriesEnabled: false,
         getNotificationParams: () => ({}),

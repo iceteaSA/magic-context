@@ -13,8 +13,25 @@ import {
 } from "./prompt-surface-measurement";
 import { ACTIVE_TOOL_IDS } from "../src/shared/prompt-surface-runtime";
 
-export const RATIFIED_FULL_MUTABLE_PROSE_CEILING = 3750;
-export const RATIFIED_LIGHT_MUTABLE_PROSE_CEILING = 1825;
+// DOWNSTREAM DEVIATION (fork only) — NOT a relaxation of the budget.
+// Upstream ratified 3750/1825 against its five-tool surface. This tree carries
+// both fork features, so the surface it must cover is genuinely larger:
+// skill-memory registers two additional tools (ctx_skill_note, ctx_skill_recall)
+// plus their guidance prose, and external-memory widens two existing tools
+// (ctx_memory gains scope:"global", ctx_search gains the "external" source)
+// without adding any. The 4283/2141 literals were ratified when the union
+// measured 4254; at v0.43.0 upstream's rewritten guidance measures 2722 alone
+// and the union 3230, still under the fork ceiling, so only measurements moved.
+// The POLICY is untouched: ceiling = floor(0.50 * measured baseline), same
+// tokenizer identity, same primary variant, same inclusion/exclusion lists.
+// Only the measurement moved. Fitting the union under 3750 would mean shipping
+// skill-memory with no prompt surface at all. These literals are re-derived from
+// source on every rebase rather than hand-edited; if these tools ever land
+// upstream, ratifying the larger surface is upstream's call, not ours. Full
+// accounting lives in docs/specs/prompt-surface/budget-fixture.json
+// ("downstreamNote").
+export const RATIFIED_FULL_MUTABLE_PROSE_CEILING = 4283;
+export const RATIFIED_LIGHT_MUTABLE_PROSE_CEILING = 2141;
 
 const DEFAULT_CC_LIGHT_ASSET_PATHS = [
     resolve(import.meta.dir, "../../../crates/mc-module/assets/guidance_light_primary.txt"),

@@ -22,7 +22,7 @@ describe("executeStatus", () => {
             "INSERT INTO compartments (session_id, sequence, start_message, end_message, start_message_id, end_message_id, title, content, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
         ).run(SESSION_ID, 1, 12, 34, "m12", "m34", "Status arc", "status body", Date.now());
 
-        const status = await executeStatus(db, SESSION_ID, 20);
+        const status = executeStatus(db, SESSION_ID, 20);
         const expected = estimateTokens("## 12-34 · Status arc\nstatus body\n");
 
         expect(status).toContain(`- History block: ~${expected.toLocaleString()} tokens`);
@@ -60,7 +60,7 @@ describe("executeStatus", () => {
         // 190K requested on a 128K model → clamped to 90% × 128K. The status must
         // say so explicitly (configured value + cap) rather than silently showing
         // the reduced value, which is what confused users in issue #241.
-        const status = await executeStatus(
+        const status = executeStatus(
             db,
             SESSION_ID,
             65,
@@ -81,7 +81,7 @@ describe("executeStatus", () => {
         initializeDatabase(db);
         getOrCreateSessionMeta(db, SESSION_ID);
 
-        const status = await executeStatus(
+        const status = executeStatus(
             db,
             SESSION_ID,
             65,
@@ -102,7 +102,7 @@ describe("executeStatus", () => {
         initializeDatabase(db);
         getOrCreateSessionMeta(db, SESSION_ID);
 
-        const status = await executeStatus(
+        const status = executeStatus(
             db,
             SESSION_ID,
             undefined,
@@ -138,7 +138,7 @@ describe("executeStatus", () => {
             SESSION_ID,
         );
 
-        const status = await executeStatus(db, SESSION_ID, 20);
+        const status = executeStatus(db, SESSION_ID, 20);
 
         expect(status).toContain("- Cache TTL: never (session)");
         expect(status).toContain(
