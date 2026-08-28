@@ -2,6 +2,8 @@ export * from "./constants";
 export * from "./embedding";
 export * from "./embedding-backfill";
 export * from "./embedding-cache";
+export * from "./external-memory";
+export * from "./external-memory-provider";
 export * from "./normalize-hash";
 export * from "./project-identity";
 export type { PromotedMemoryRef } from "./promotion";

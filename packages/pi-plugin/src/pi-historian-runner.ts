@@ -38,6 +38,7 @@
  */
 
 import * as crypto from "node:crypto";
+import { basename } from "node:path";
 import { withContentLanguageDirective } from "@magic-context/core/agents/language-directive";
 import { embedAndStoreCompartmentChunks } from "@magic-context/core/features/magic-context/compartment-embedding";
 import { insertCompartmentEvents } from "@magic-context/core/features/magic-context/compartment-events";
@@ -46,6 +47,7 @@ import {
 	appendCompartments,
 	getCompartments,
 } from "@magic-context/core/features/magic-context/compartment-storage";
+import type { PromotedMemoryRef } from "@magic-context/core/features/magic-context/memory";
 import {
 	embedPromotedFacts,
 	promoteSessionFactsDurable,
@@ -1358,7 +1360,7 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 					`historian unanchored promotion skipped: reason=${unanchoredPromotionSkipReason} facts=${validatedPass.facts?.length ?? 0} user_observations=${validatedPass.userObservations?.length ?? 0} primers=${validatedPass.primerCandidates?.length ?? 0} events_publishable=${publishableEvents.length}/${validatedPass.events?.length ?? 0}`,
 				);
 			}
-			let promotedFactRefs: Array<{ memoryId: number; content: string }> = [];
+			let promotedFactRefs: PromotedMemoryRef[] = [];
 			let promotedFactCount = 0;
 			let publishedEventCount = 0;
 			let persistedIds: number[] = [];
@@ -1646,6 +1648,7 @@ export async function runPiHistorian(deps: PiHistorianDeps): Promise<void> {
 							sessionId,
 							projectPath,
 							promotedFactRefs,
+							{ projectName: basename(directory) },
 						);
 					} catch (error) {
 						sessionLog(
