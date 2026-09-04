@@ -2057,7 +2057,7 @@ describe("PiSubagentRunner spawn lifecycle", () => {
 		const child = createMockChild();
 		const { runner } = runnerWith(child);
 		const sourceLine =
-			`263 | ${"FROM cacheInterceptorV${VERSION2} ".repeat(100)}`.slice(
+			`263 | ${`FROM cacheInterceptorV\${VERSION2} `.repeat(100)}`.slice(
 				0,
 				3_000,
 			);
