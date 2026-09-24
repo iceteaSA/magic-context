@@ -689,6 +689,7 @@ export async function maybeInjectSkillMemory(
     frontmatterConfig: SkillMemoryConfig | null,
     output: { output?: unknown },
     intent?: string,
+    currentContentHash?: string | null,
 ): Promise<void> {
     if (typeof output.output !== "string" || output.output.length === 0) return;
 
@@ -699,6 +700,7 @@ export async function maybeInjectSkillMemory(
         scope: tier,
         projectIdentity,
         frontmatterConfig,
+        currentContentHash,
     });
     if (block) {
         output.output = `${output.output}\n\n${block}`;
@@ -881,6 +883,22 @@ export function createToolExecuteAfterHook(args: {
                                       intentKey(typedInput.sessionID, typedInput.callID),
                                   ) ?? undefined)
                                 : undefined;
+                            // Compute the current content-hash for the skill
+                            // folder so the recall can label notes recorded
+                            // against an older SKILL.md. Best-effort: NULL
+                            // produces byte-identical output to pre-versioning.
+                            let currentContentHash: string | null = null;
+                            try {
+                                const { dirname } = await import("node:path");
+                                const { computeSkillContentHash } = await import(
+                                    "../../features/magic-context/skill-memory/content-hash"
+                                );
+                                currentContentHash = computeSkillContentHash(
+                                    dirname(registryEntry.resolvedPath),
+                                );
+                            } catch {
+                                // non-fatal — labelled with NULL = no change to block shape
+                            }
                             await maybeInjectSkillMemory(
                                 args.db,
                                 skillId,
@@ -889,6 +907,7 @@ export function createToolExecuteAfterHook(args: {
                                 registryEntry.frontmatterConfig,
                                 output as { output?: unknown },
                                 stashed,
+                                currentContentHash,
                             );
                         }
                     } catch (error) {

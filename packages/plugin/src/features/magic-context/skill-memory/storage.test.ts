@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "../../../shared/sqlite";
 import { closeQuietly } from "../../../shared/sqlite-helpers";
+import { runForkMigrations } from "../fork-migrations";
 import { float32ArrayToBlob } from "../memory/storage-memory-embeddings";
 import { runMigrations } from "../migrations";
 import { initializeDatabase } from "../storage-db";
@@ -23,6 +24,9 @@ function makeDb(): Database {
     const db = new Database(":memory:");
     initializeDatabase(db);
     runMigrations(db);
+    // Fork migrations add the columns the storage layer now expects (e.g. skill_content_hash
+    // via v10003); without this insertSkillMemoryNote throws "no column named ...".
+    runForkMigrations(db);
     return db;
 }
 

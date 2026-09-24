@@ -229,6 +229,26 @@ export const FORK_MIGRATIONS: Migration[] = [
         },
     },
     {
+        // Skill-memory content-hash: stamp a 16-hex-char SHA-256 over the
+        // skill folder (files + paths) on each write so recall can flag notes
+        // recorded against an older SKILL.md. NULL is the no-history state;
+        // existing rows are deliberately NOT backfilled — re-recording a
+        // lesson against the current version is what populates this column.
+        version: 10_003,
+        description: "Skill-memory content hash: skill_content_hash column on skill_memory",
+        up: (db: Database) => {
+            // Idempotent via columnExists (same shape as 10_001/10_002).
+            // No DEFAULT — NULL means "no hash known at write time", which is
+            // both the legacy-row state and the state when a write couldn't
+            // resolve the skill folder. Adding DEFAULT '' would let every
+            // recall false-positive as "older".
+            if (!columnExists(db, "skill_memory", "skill_content_hash")) {
+                db.exec(`ALTER TABLE skill_memory ADD COLUMN skill_content_hash TEXT;`);
+            }
+        },
+    },
+
+    {
         // External memory v2 legacy session columns.
         //
         // Renumbered nine times chasing the upstream lane

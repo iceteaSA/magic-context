@@ -2,6 +2,7 @@
 
 import { describe, expect, mock, spyOn, test } from "bun:test";
 
+import { runForkMigrations } from "../../features/magic-context/fork-migrations";
 import { __resetMessageIndexAsyncForTests } from "../../features/magic-context/message-index-async";
 import { runMigrations } from "../../features/magic-context/migrations";
 import { insertSkillMemoryNote } from "../../features/magic-context/skill-memory/storage";
@@ -36,6 +37,9 @@ function createTestDb(): Database {
     const db = new Database(":memory:");
     initializeDatabase(db);
     runMigrations(db);
+    // Fork migrations add the columns insertSkillMemoryNote now writes (v10003's
+    // skill_content_hash); without this the test inserts throw "no column ...".
+    runForkMigrations(db);
     return db;
 }
 

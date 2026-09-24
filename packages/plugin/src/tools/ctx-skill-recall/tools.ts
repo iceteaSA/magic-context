@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { type ToolContext, type ToolDefinition, tool } from "@opencode-ai/plugin";
 import { resolveProjectIdentity } from "../../features/magic-context/memory/project-identity";
+import { computeSkillContentHash } from "../../features/magic-context/skill-memory/content-hash";
 import { parseFrontmatterConfig } from "../../features/magic-context/skill-memory/frontmatter";
 import {
     getSkillLoad,
@@ -155,6 +157,11 @@ export function createCtxSkillRecallTool(deps: CtxSkillRecallToolDeps): ToolDefi
             }
 
             // Delegate to shared recall core (feature layer — same as transparent path)
+            // currentContentHash is best-effort — recall still works without it
+            // (the block just renders byte-identical to pre-versioning output).
+            const currentContentHash = resolvedPath
+                ? computeSkillContentHash(dirname(resolvedPath))
+                : null;
             const block = await recallSkillMemoryBlock(deps.db, {
                 skill: args.skill,
                 intent: args.intent,
@@ -162,6 +169,7 @@ export function createCtxSkillRecallTool(deps: CtxSkillRecallToolDeps): ToolDefi
                 projectIdentity,
                 frontmatterConfig,
                 maxTokens: args.max_tokens,
+                currentContentHash,
             });
 
             if (!block) {
