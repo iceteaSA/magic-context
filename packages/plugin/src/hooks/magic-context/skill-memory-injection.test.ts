@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { runForkMigrations } from "../../features/magic-context/fork-migrations";
 import { runMigrations } from "../../features/magic-context/migrations";
 import {
     createSkillLoadRegistry,
@@ -21,6 +22,9 @@ function makeDb(): Database {
     const db = new Database(":memory:");
     initializeDatabase(db);
     runMigrations(db);
+    // Fork migrations add the columns insertSkillMemoryNote now writes (v10003's
+    // skill_content_hash); without this the test inserts throw "no column ...".
+    runForkMigrations(db);
     return db;
 }
 

@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { type ToolContext, type ToolDefinition, tool } from "@opencode-ai/plugin";
 import { cosineSimilarity } from "../../features/magic-context/memory/cosine-similarity";
 import { embedTextForProject } from "../../features/magic-context/memory/embedding";
@@ -8,6 +9,7 @@ import {
     float32ArrayToBlob,
     toFloat32Array,
 } from "../../features/magic-context/memory/storage-memory-embeddings";
+import { computeSkillContentHash } from "../../features/magic-context/skill-memory/content-hash";
 import { parseFrontmatterConfig } from "../../features/magic-context/skill-memory/frontmatter";
 import {
     getSkillLoad,
@@ -139,10 +141,17 @@ export function createCtxSkillNoteTool(deps: CtxSkillNoteToolDeps): ToolDefiniti
             const part = partitionKey(tier, projectIdentity);
             const normalizedHash = computeNormalizedHash(args.delta);
 
+            // Content-hash of the resolved skill folder: stamp every note write so
+            // recall can flag notes recorded against an older SKILL.md. Best-effort —
+            // an unreadable folder stores NULL and the note still persists.
+            const skillContentHash = computeSkillContentHash(dirname(resolvedPath));
+
             // Check for exact duplicate
             const existing = findExistingNote(deps.db, args.skill, tier, part, normalizedHash);
             if (existing) {
-                bumpHitCount(deps.db, args.skill, tier, part, normalizedHash);
+                // Dedup re-record refreshes the stored hash when known — re-recording
+                // the same lesson against the current version re-validates it.
+                bumpHitCount(deps.db, args.skill, tier, part, normalizedHash, skillContentHash);
                 return (
                     `Note already recorded (hit_count now ${existing.hit_count + 1}). ` +
                     `Exact duplicate detected — hit count bumped to reinforce recall priority.`
@@ -169,6 +178,15 @@ export function createCtxSkillNoteTool(deps: CtxSkillNoteToolDeps): ToolDefiniti
                         cosineSimilarity(deltaEmb.vector, toFloat32Array(c.delta_embedding)) >=
                         threshold
                     ) {
+                        // Same re-validation as the exact-hash dedup path:
+                        // if we can resolve a fresh hash, refresh the stored one.
+                        if (skillContentHash) {
+                            deps.db
+                                .prepare(
+                                    `UPDATE skill_memory SET skill_content_hash = ? WHERE id = ?`,
+                                )
+                                .run(skillContentHash, c.id);
+                        }
                         bumpHitCountById(deps.db, c.id);
                         return "Note already recorded (semantic duplicate — hit_count bumped).";
                     }
@@ -192,11 +210,12 @@ export function createCtxSkillNoteTool(deps: CtxSkillNoteToolDeps): ToolDefiniti
                 deltaEmbedding: deltaEmb ? float32ArrayToBlob(deltaEmb.vector) : null,
                 embeddingModelVersion: modelVersion,
                 createdAt: Date.now(),
+                skillContentHash,
             });
 
             if (id === null) {
                 // Race condition: another process inserted the same hash
-                bumpHitCount(deps.db, args.skill, tier, part, normalizedHash);
+                bumpHitCount(deps.db, args.skill, tier, part, normalizedHash, skillContentHash);
                 return "Note already recorded (concurrent insert detected — hit count bumped).";
             }
 

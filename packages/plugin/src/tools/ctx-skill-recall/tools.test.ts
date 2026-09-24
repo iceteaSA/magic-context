@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { runForkMigrations } from "../../features/magic-context/fork-migrations";
 import { runMigrations } from "../../features/magic-context/migrations";
 import { parseFrontmatterConfig } from "../../features/magic-context/skill-memory/frontmatter";
 import { insertSkillMemoryNote } from "../../features/magic-context/skill-memory/storage";
@@ -23,6 +24,9 @@ function makeDb(): Database {
     const db = new Database(":memory:");
     initializeDatabase(db);
     runMigrations(db);
+    // Fork migrations add the columns the storage layer now expects (v10003's
+    // skill_content_hash); without this insertSkillMemoryNote throws.
+    runForkMigrations(db);
     return db;
 }
 

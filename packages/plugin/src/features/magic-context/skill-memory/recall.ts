@@ -145,29 +145,55 @@ export function buildSkillMemoryBlock(
     mode: "no-intent" | "flat-fts" | "full" | "fts5-fallback",
     notes: SkillMemoryNote[],
     pinnedCount: number,
+    currentContentHash?: string | null,
 ): string {
     if (notes.length === 0) return "";
+
+    // Label-only: a note whose stored hash is non-null AND differs from the
+    // current hash gets `skill_version="older"`. Equal or NULL stored hash
+    // emits NO new attribute — preserves the byte-identical invariant for
+    // existing recall tests when currentContentHash is absent/undefined.
+    const labelOlder = (n: SkillMemoryNote): string => {
+        if (currentContentHash === undefined || currentContentHash === null) return "";
+        if (n.skill_content_hash === null || n.skill_content_hash === undefined) return "";
+        if (n.skill_content_hash === currentContentHash) return "";
+        return ` skill_version="older"`;
+    };
 
     const noteXml = notes
         .map((n) => {
             const intentAttr = n.intent ? ` intent="${escapeXml(n.intent)}"` : "";
             const pinnedAttr = n.pinned === 1 ? ` pinned="true"` : ` pinned="false"`;
+            const versionAttr = labelOlder(n);
             return (
-                `<note kind="${n.kind}"${intentAttr} hit_count="${n.hit_count}"${pinnedAttr}>\n` +
+                `<note kind="${n.kind}"${intentAttr} hit_count="${n.hit_count}"${pinnedAttr}${versionAttr}>\n` +
                 `<delta>${escapeXml(n.delta)}</delta>\n` +
                 `</note>`
             );
         })
         .join("\n");
 
+    // Derived from labelOlder so the block count and the per-note attributes cannot
+    // disagree. When currentContentHash is absent this is 0, keeping output byte-identical.
+    const olderCount = notes.filter((n) => labelOlder(n) !== "").length;
+
+    const versionLine = olderCount > 0 ? ` older="${olderCount}"` : "";
+
     const footer =
         `\n\n---\n` +
         `*After using this skill, call \`ctx_skill_note\` — record only gotchas, novel discoveries, or error→fix; skip routine successes.*`;
 
+    // The advisory sits between the block and the footer, so the footer stays last.
+    const advisory =
+        olderCount > 0
+            ? `\nNotes marked skill_version="older" were recorded against an earlier version of this skill; where one conflicts with the current SKILL.md, follow the SKILL.md.`
+            : "";
+
     return (
-        `<skill-memory skill="${escapeXml(skillId)}" mode="${mode}" count="${notes.length}" pinned="${pinnedCount}">\n` +
+        `<skill-memory skill="${escapeXml(skillId)}" mode="${mode}" count="${notes.length}" pinned="${pinnedCount}"${versionLine}>\n` +
         noteXml +
         `\n</skill-memory>` +
+        advisory +
         footer
     );
 }
@@ -201,6 +227,13 @@ export async function recallSkillMemoryBlock(
         projectIdentity: string;
         frontmatterConfig: SkillMemoryConfig | null;
         maxTokens?: number;
+        /**
+         * Content hash of the current SKILL.md tree. When provided, notes whose
+         * stored hash differs are labelled `skill_version="older"` and an
+         * advisory line is added. Omit/undefined/null for byte-identical output
+         * to existing tests (the labelling is opt-in by callers).
+         */
+        currentContentHash?: string | null;
     },
 ): Promise<string> {
     if (!opts.frontmatterConfig?.enabled) return "";
@@ -226,6 +259,7 @@ export async function recallSkillMemoryBlock(
                 mode,
                 notes,
                 notes.filter((n) => n.pinned === 1).length,
+                opts.currentContentHash,
             );
         };
 

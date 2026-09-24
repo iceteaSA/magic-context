@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "../../../shared/sqlite";
 import { closeQuietly } from "../../../shared/sqlite-helpers";
+import { runForkMigrations } from "../fork-migrations";
 import {
     _resetProjectEmbeddingRegistryForTests,
     _setTestProviderFactoryForProject,
@@ -58,6 +59,7 @@ describe("reembed", () => {
         try {
             initializeDatabase(db);
             runMigrations(db);
+            runForkMigrations(db);
             const snapshot = registerReembedTestProject(db, "git:abc");
             db.prepare(
                 `INSERT INTO skill_memory (skill_id,resolved_path,tier,project_identity,intent,kind,delta,normalized_hash,hit_count,pinned,created_at)
@@ -96,6 +98,7 @@ describe("reembed", () => {
         try {
             initializeDatabase(db);
             runMigrations(db);
+            runForkMigrations(db);
             registerReembedTestProject(db, "git:repoA");
             promoteSkillObservations(db, "git:repoA", [
                 { skillId: "council", kind: "fix", lesson: "L7" },

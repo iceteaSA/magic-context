@@ -4,9 +4,10 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 
 import { MagicContextConfigSchema } from "../config/schema/magic-context";
 import { replaceAllCompartmentState } from "../features/magic-context/compartment-storage";
+import { runForkMigrations } from "../features/magic-context/fork-migrations";
 import { insertMemory } from "../features/magic-context/memory";
 import { resolveProjectIdentity } from "../features/magic-context/memory/project-identity";
-import { FORK_MIGRATION_VERSION_FLOOR, runMigrations } from "../features/magic-context/migrations";
+import { runMigrations } from "../features/magic-context/migrations";
 import { upsertMural } from "../features/magic-context/mural/storage-mural";
 import { insertSkillMemoryNote } from "../features/magic-context/skill-memory/storage";
 import {
@@ -42,6 +43,9 @@ function createTestDb(): Database {
     const db = new Database(":memory:");
     initializeDatabase(db);
     runMigrations(db);
+    // Fork migrations add the columns insertSkillMemoryNote now writes (v10003's
+    // skill_content_hash); without this the test inserts throw "no column ...".
+    runForkMigrations(db);
     return db;
 }
 
@@ -321,19 +325,12 @@ describe("buildStatusDetail — protected-token floor", () => {
 
 describe("buildStatusDetail — storage version probe", () => {
     test("reports the upstream lane when fork rows share context.db", async () => {
+        // createTestDb() now runs runForkMigrations, which populates schema_migrations
+        // with the actual fork rows (10000, 10001, 10002, 10003, 10100). The probe
+        // contract is "fork rows don't shift the upstream ceiling", and the real
+        // data is exactly what production sees — no need to seed duplicates.
         const db = createTestDb();
         try {
-            db.prepare(
-                "INSERT INTO schema_migrations(version, description, applied_at) VALUES (?, ?, ?), (?, ?, ?)",
-            ).run(
-                FORK_MIGRATION_VERSION_FLOOR,
-                "fork migration 10000",
-                0,
-                FORK_MIGRATION_VERSION_FLOOR + 1,
-                "fork migration 10001",
-                0,
-            );
-
             const detail = buildStatusDetail(db, "ses-storage-version", process.cwd());
 
             expect(detail.storage_versions).toEqual({

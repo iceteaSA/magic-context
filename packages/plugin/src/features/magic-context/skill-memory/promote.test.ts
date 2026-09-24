@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Database } from "../../../shared/sqlite";
 import { closeQuietly } from "../../../shared/sqlite-helpers";
+import { runForkMigrations } from "../fork-migrations";
 import { runMigrations } from "../migrations";
 import { initializeDatabase } from "../storage-db";
 import { promoteSkillObservations } from "./promote";
@@ -9,6 +10,9 @@ function makeDb(): Database {
     const db = new Database(":memory:");
     initializeDatabase(db);
     runMigrations(db);
+    // Fork migrations add the columns promoteSkillObservations now stamps (v10003's
+    // skill_content_hash); without this insertSkillMemoryNote throws "no column ...".
+    runForkMigrations(db);
     return db;
 }
 

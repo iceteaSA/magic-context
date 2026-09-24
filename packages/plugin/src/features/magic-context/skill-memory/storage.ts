@@ -63,6 +63,7 @@ export interface SkillMemoryNote {
     normalized_hash: string;
     created_at: number;
     last_used_at: number | null;
+    skill_content_hash: string | null;
 }
 
 export interface InsertSkillMemoryNoteArgs {
@@ -82,6 +83,7 @@ export interface InsertSkillMemoryNoteArgs {
     embeddingModelVersion?: string | null;
     normalizedHash: string;
     createdAt: number;
+    skillContentHash?: string | null;
 }
 
 /**
@@ -99,8 +101,8 @@ export function insertSkillMemoryNote(
                 `INSERT INTO skill_memory
 				   (skill_id, resolved_path, tier, skill_source, project_identity, origin_project, source_type,
 				    intent, kind, delta, tags, intent_embedding, delta_embedding, embedding_model_version,
-				    hit_count, pinned, normalized_hash, created_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?)`,
+				    hit_count, pinned, normalized_hash, created_at, skill_content_hash)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
             )
             .run(
                 args.skillId,
@@ -119,6 +121,7 @@ export function insertSkillMemoryNote(
                 args.embeddingModelVersion ?? null,
                 args.normalizedHash,
                 args.createdAt,
+                args.skillContentHash ?? null,
             );
         return result.lastInsertRowid as number;
     } catch (err: unknown) {
@@ -182,7 +185,10 @@ export function getSkillMemoryNotes(
 
 /**
  * Bump hit_count and update last_used_at for a note identified by its
- * normalized_hash within a (skill_id, tier, project_identity) scope.
+ * normalized_hash within a (skill_id, tier, project_identity) scope. When
+ * `skillContentHash` is non-null, also refresh the stored hash — re-recording
+ * the same lesson against the current SKILL.md re-validates it (the prototype's
+ * whole point). When the arg is omitted or null, the stored hash is preserved.
  */
 export function bumpHitCount(
     db: Database,
@@ -190,7 +196,23 @@ export function bumpHitCount(
     tier: "project" | "global",
     projectIdentity: string,
     normalizedHash: string,
+    skillContentHash?: string | null,
 ): void {
+    if (skillContentHash) {
+        db.prepare(
+            `UPDATE skill_memory
+			 SET hit_count = hit_count + 1, last_used_at = ?, skill_content_hash = ?
+			 WHERE skill_id = ? AND tier = ? AND project_identity = ? AND normalized_hash = ?`,
+        ).run(
+            Date.now(),
+            skillContentHash,
+            skillId,
+            tier,
+            partitionKey(tier, projectIdentity),
+            normalizedHash,
+        );
+        return;
+    }
     db.prepare(
         `UPDATE skill_memory
 		 SET hit_count = hit_count + 1, last_used_at = ?
